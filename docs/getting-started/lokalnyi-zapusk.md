@@ -6,7 +6,7 @@
 
 ### Инфраструктура
 
-Подними инфраструктуру через docker compose (в репозитории есть отдельный infra compose). \[conversation\_history]
+Подними инфраструктуру через docker compose (в репозитории есть отдельный infra compose).&#x20;
 
 Пример:
 
