@@ -20,3 +20,5 @@ For DB messages - `SELECT id, room_id, author, body, nonce, created_at FROM mess
 Clear all DB safety - `TRUNCATE TABLE messages, rooms RESTART IDENTITY CASCADE;`
 
 gitbook: https://qqracha.gitbook.io/qqracha-docs/vKWuRLooKQWdYTCfU3pv
+
+KB CHECK
