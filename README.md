@@ -1,7 +1,10 @@
-Here readme lol ( ͡° ͜ʖ ͡°)
+# Here readme lol ( ͡° ͜ʖ ͡°)
+
+## Setup
 
 1) First of all: Rename `.env.example` to `.env`
 
+## Usefull commands
 
 Check docker health - `docker compose -f docker-compose.infra.yml ps`
 
@@ -19,6 +22,6 @@ For DB messages - `SELECT id, room_id, author, body, nonce, created_at FROM mess
 
 Clear all DB safety - `TRUNCATE TABLE messages, rooms RESTART IDENTITY CASCADE;`
 
-gitbook: https://qqracha.gitbook.io/qqracha-docs/vKWuRLooKQWdYTCfU3pv
+## Sources
 
-KB CHECK
+gitbook: <https://qqracha.gitbook.io/qqracha-docs/vKWuRLooKQWdYTCfU3pv>
