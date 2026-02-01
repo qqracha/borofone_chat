@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
+from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 
 from app.infra.db import engine
@@ -12,18 +13,8 @@ from app.api.ws import router as ws_router
 # Нужно исправить этот костыль на Alembic миграцию
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Миграции применяются вручную через alembic upgrade
     # Вся часть кода до yield выполняется до запуска приложения, часть после yield при выключении сервера.
-    last_exc = None
-    for _ in range(30): # 30 попыток подключения к бд
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all) # TODO: Миграция Alembic
-            break
-        except Exception as e:
-            last_exc = e
-            await asyncio.sleep(1)
-    else:
-        raise last_exc
 
     yield
 
@@ -37,5 +28,5 @@ app = FastAPI(lifespan=lifespan)
 async def root():
     return {"ok": True} # Заглушка для быстрой проверки запуска API
 
-app.include_router(http_router) # Добавляем роутер с HTTP эндпоинтами
-app.include_router(ws_router) # Добавляем роутер с WebSockets эндпоинтами
+app.include_router(http_router, tags=["HTTP"]) # Добавляем роутер с HTTP эндпоинтами
+app.include_router(ws_router, tags=["Websocket"]) # Добавляем роутер с WebSockets эндпоинтами

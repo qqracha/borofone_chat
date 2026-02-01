@@ -29,7 +29,7 @@ borofone_chat/
 └── README.md                  
 ```
 
-### Main components
+### // Main components
 
 `api/` - содержит логику взаимодействия с клиентом.  
 
@@ -47,7 +47,7 @@ borofone_chat/
 
 *You'll definitely find this useful, I'd think about it. :3*
 
-### Docker & Infrastructure
+### // Docker & Infrastructure
 
 **Check docker health:**
   
@@ -73,7 +73,7 @@ docker compose -f docker-compose.infra.yml down
 docker compose -f docker-compose.infra.yml exec postgres psql -U app -d app
 ```
 
-### Application
+### // Application
 
 **Start api:**
 
@@ -81,7 +81,7 @@ docker compose -f docker-compose.infra.yml exec postgres psql -U app -d app
 uvicorn app.main:app --reload --port 8000
 ```
 
-### SQL Debug Queries
+### // SQL Debug Queries
 
 **Select Rooms:**
 
@@ -99,6 +99,44 @@ SELECT id, room_id, author, body, nonce, created_at FROM messages ORDER BY id DE
 
 ```sql
 TRUNCATE TABLE messages, rooms RESTART IDENTITY CASCADE;
+```
+
+### // Alembic migration
+
+**Current migration version:**
+
+```bash
+alembic current
+```
+
+**Create new version migration:**
+
+```bash
+alembic revision --autogenerate -m "sample_text"
+```
+
+**Upgrade to new migration version:**
+
+```bash
+alembic upgrade head
+```
+
+**Downgrade to 1 step down migration version:**
+
+```bash
+alembic downgrade -1
+```
+
+**View migration history:**
+
+```bash
+alembic history --verbose
+```
+
+**View the following migrations to apply:**
+
+```bash
+alembic heads
 ```
 
 ## Sources

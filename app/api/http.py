@@ -15,6 +15,16 @@ router = APIRouter()
 # Health check endpoint, ping Redis and PostgresSQL.
 @router.get("/health")
 async def health(db: AsyncSession = Depends(get_db)):
+    """
+    Health-check endpoint для мониторинга.
+
+    Проверяет:
+    - PostgreSQL
+    - Redis
+
+    Returns:
+        {"ok": true, "redis": true}
+    """
     await db.execute(select(1))
     redis_ok = await ping_redis()
     return {"ok": True, "redis": redis_ok}
@@ -23,6 +33,13 @@ async def health(db: AsyncSession = Depends(get_db)):
 # Создание новой комнаты чата.
 @router.post("/rooms")
 async def create_room(payload: dict, db: AsyncSession = Depends(get_db)):
+    """
+    Body:
+        {"title": "Room name"}
+
+    Returns:
+        {"id": 1, "title": "Room name"}
+    """
     room = Room(title=str(payload.get("title", "room"))) # TODO: Вместо payload словаря - сделать pydantic типизацию
     db.add(room) # {"id": 1, "title": "Room name"}
     await db.commit()

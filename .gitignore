@@ -7,3 +7,5 @@
 /app/schemas/__pycache__
 /app/api/__pycache__
 /app/infra/__pycache__
+/alembic/__pycache__
+*.pyc
