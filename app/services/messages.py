@@ -11,13 +11,14 @@ NONCE_TTL_SECONDS = 300
 PENDING = "PENDING"
 
 
-def _nonce_key(author: str, nonce: str) -> str:
-    return f"nonce:{author}:{nonce}"
+def _nonce_key(user_id: int, nonce: str) -> str:
+    return f"nonce:{user_id}:{nonce}"
 
 # Discord-like deduplication message by nonce, docs for more info.
 async def create_message_with_nonce(
         db: AsyncSession,
         room_id: int,
+        user_id: int,
         payload: MessageCreate,
 ) -> Message:
 
@@ -25,7 +26,7 @@ async def create_message_with_nonce(
     if payload.nonce is None:
         msg = Message(
             room_id=room_id,
-            author=payload.author,
+            user_id=user_id,
             body=payload.body,
             nonce=None,
         )
@@ -35,7 +36,7 @@ async def create_message_with_nonce(
         return msg
 
     # With nonce — check deduplication
-    key = _nonce_key(payload.author, payload.nonce)
+    key = _nonce_key(user_id, payload.nonce)
 
     # Trying to atomically capture nonce
     acquired = await redis_client.set(key, PENDING, nx=True, ex=NONCE_TTL_SECONDS)
@@ -67,7 +68,7 @@ async def create_message_with_nonce(
     try:
         msg = Message(
             room_id=room_id,
-            author=payload.author,
+            user_id=user_id,
             body=payload.body,
             nonce=payload.nonce,
         )

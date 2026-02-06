@@ -26,7 +26,7 @@ class ErrorResponse(BaseModel):
         json_schema_extra = {
             "examples": [
                 {"detail": "nonce conflict"},
-                {"detail": "author cannot be empty"},
+                {"detail": "user_id cannot be empty"},
                 {"detail": "body must be 4096 characters or less"}
             ]
         }
@@ -44,7 +44,7 @@ class WebSocketErrorResponse(BaseModel):
                 {
                     "type": "error",
                     "code": "validation_error",
-                    "detail": [{"field": "author", "message": "author cannot be empty"}]
+                    "detail": [{"field": "user_id", "message": "user_id cannot be empty"}]
                 },
                 {
                     "type": "error",

@@ -121,8 +121,8 @@ async def ws_room(ws: WebSocket, room_id: int):
                         "message": {
                             "id": msg.id,
                             "room_id": msg.room_id,
+                            "user_id": msg.user_id,
                             "nonce": msg.nonce,
-                            "author": msg.author,
                             "body": msg.body,
                             "created_at": msg.created_at.isoformat(),
                         },

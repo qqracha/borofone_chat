@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.db import get_db
 from app.infra.redis import ping_redis
-from app.models import Message, Room
+from app.models import Message, Room, User
 from app.schemas.common import HealthResponse
 from app.schemas.rooms import RoomCreate, RoomResponse
 from app.schemas.messages import MessageCreate, MessageResponse
 from app.services.messages import create_message_with_nonce
+from app.dependencies import get_current_user, require_admin
 
 router = APIRouter()
 
@@ -42,6 +43,7 @@ async def health(db: AsyncSession = Depends(get_db)):
 
 @router.post(
     "/rooms",
+    dependencies=[Depends(require_admin)],
     response_model=RoomResponse,
     status_code=201,
     summary="Create room",
@@ -49,7 +51,8 @@ async def health(db: AsyncSession = Depends(get_db)):
 )
 async def create_room(
     payload: RoomCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Creating a new room.
@@ -66,7 +69,10 @@ async def create_room(
         RoomResponse: Created room with id
 
     """
-    room = Room(title=payload.title)
+    room = Room(
+        title=payload.title,
+        created_by=current_user.id
+    )
     db.add(room)
     await db.commit()
     await db.refresh(room)
@@ -82,7 +88,8 @@ async def create_room(
 async def list_messages(
     room_id: int,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get room message history.
@@ -113,7 +120,7 @@ async def list_messages(
             "id": m.id,
             "room_id": m.room_id,
             "nonce": m.nonce,
-            "author": m.author,
+            "user_id": m.user_id,
             "body": m.body,
             "created_at": m.created_at.isoformat(),
         }
@@ -145,9 +152,9 @@ async def list_messages(
             "content": {
                 "application/json": {
                     "examples": {
-                        "empty_author": {
-                            "summary": "Author is empty",
-                            "value": {"detail": [{"type": "value_error", "msg": "author cannot be empty"}]}
+                        "empty_user_id": {
+                            "summary": "user_id is empty",
+                            "value": {"detail": [{"type": "value_error", "msg": "user_id cannot be empty"}]}
                         },
                         "long_body": {
                             "summary": "The message is too long",
@@ -166,7 +173,8 @@ async def list_messages(
 async def post_message(
     room_id: int,
     payload: MessageCreate,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Sending a message to a room.
@@ -175,7 +183,7 @@ async def post_message(
         MessageCreate: Validation message
 
     Validation:
-        - author: 1-32 characters, not empty
+        - user_id: 1-32 characters, not empty
         - body: 1-4096 characters, not empty
         - nonce: optional, 1-25 characters or NONE
         - enforce_nonce: Requires the presence of a nonce
@@ -187,12 +195,16 @@ async def post_message(
         HTTPException 409: Duplicated nonce at enforce_nonce=true
         HTTPException 400: Fields validation error
     """
-    msg = await create_message_with_nonce(db=db, room_id=room_id, payload=payload)
+    msg = await create_message_with_nonce(
+        db=db,
+        room_id=room_id,
+        user_id=current_user.id,
+        payload=payload)
     return {
         "id": msg.id,
         "room_id": msg.room_id,
+        "user_id": msg.user_id,
         "nonce": msg.nonce,
-        "author": msg.author,
         "body": msg.body,
         "created_at": msg.created_at.isoformat(),
     }

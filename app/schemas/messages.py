@@ -6,28 +6,9 @@ from pydantic import BaseModel, field_validator, model_validator
 # Схема для создания сообщения.
 class MessageCreate(BaseModel):
 
-    author: str
     body: str
     nonce: str | int | None = None
     enforce_nonce: bool = False
-
-    @field_validator("author")
-    @classmethod
-    def validate_author(cls, v: str) -> str:
-        """
-        Author name validation.
-
-        Limit: 32 characters
-        """
-        v = v.strip()
-
-        if not v:
-            raise ValueError("author cannot be empty")
-
-        if len(v) > 32:
-            raise ValueError("author must be 32 characters or less")
-
-        return v
 
     @field_validator("body")
     @classmethod
@@ -89,7 +70,7 @@ class MessageResponse(BaseModel):
     id: int
     room_id: int
     nonce: str | None
-    author: str
+    user_id: int
     body: str
     created_at: str  # ISO 8601 format
 
@@ -100,7 +81,7 @@ class MessageResponse(BaseModel):
                 "id": 1,
                 "room_id": 1,
                 "nonce": "abc123",
-                "author": "user123",
+                "user_id": "1",
                 "body": "Hello, world!",
                 "created_at": "2025-02-01T22:00:00+00:00"
             }

@@ -1,12 +1,36 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+"""
+Настройки приложения.
+
+Все настройки загружаются из переменных окружения (.env файл).
+"""
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    """
+    Настройки приложения с автозагрузкой из .env
 
-    app_name: str = "borofone_chat"
-    database_url: str
-    redis_url: str
+    Переменные окружения:
+    - DATABASE_URL: URL подключения к PostgreSQL
+    - REDIS_URL: URL подключения к Redis
+    - JWT_SECRET_KEY: Секретный ключ для подписи JWT токенов
+    """
+
+    # Database
+    database_url: str = "postgresql+asyncpg://app:password@localhost:5432/app"
+
+    # Redis
+    redis_url: str = "redis://localhost:6379/0"
+
+    # JWT Authentication
+    jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION_USE_LONG_RANDOM_STRING"
+
+    # Для production используй: openssl rand -hex 32
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
 
 
+# Singleton instance
 settings = Settings()
