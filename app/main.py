@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
 
 from app.infra.db import engine
 from app.infra.redis import redis_client
@@ -41,6 +42,7 @@ app.add_middleware(
 async def root():
     return {"tomato": True} # Stub for quickly testing API startup
 
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.include_router(http_router, tags=["HTTP"]) # Add a router with HTTP endpoints
 app.include_router(ws_router, tags=["Websocket"]) # Add a router with WebSockets endpoints
 app.include_router(auth_router)  # /auth/*

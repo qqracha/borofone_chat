@@ -3,17 +3,18 @@ REST API endpoints for chat.
 
 All endpoints use Pydantic schemes for validation.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.infra.db import get_db
 from app.infra.redis import ping_redis
 from app.models import Message, Room, User
 from app.schemas.common import HealthResponse
 from app.schemas.rooms import RoomCreate, RoomResponse
-from app.schemas.messages import MessageCreate, MessageResponse
+from app.schemas.messages import MessageCreate, MessageResponse, MessageUserResponse
 from app.services.messages import create_message_with_nonce
 from app.dependencies import get_current_user, require_admin
 
@@ -93,46 +94,44 @@ async def list_messages(
 ):
     """
     Get room message history.
-
     Args:
         room_id: ID rooms (path parameter)
         limit: Number of message (query parameter, by default 50)
-
     Returns:
         list[MessageResponse]: List of message (from old to new)
-
-    Note:
-        - Messages are sorted by created_at
-        - The nonce field may be null
-        - created_at is ISO 8601 format
     """
     stmt = (
-        select(Message, User.username)
-        .join(User, Message.user_id == User.id, isouter=True)
+        select(Message)
         .where(Message.room_id == room_id)
+        .options(joinedload(Message.user))
         .order_by(Message.id.desc())
         .limit(limit)
     )
-    rows = (await db.execute(stmt)).all()
-    rows.reverse() # from old to new
 
+    result = await db.execute(stmt)
+    messages = result.scalars().all()
+    messages = list(reversed(messages))
     return [
-        {
-            "id": message.id,
-            "room_id": message.room_id,
-            "nonce": message.nonce,
-            "user_id": message.user_id,
-            "body": message.body,
-            "created_at": message.created_at.isoformat(),
-        }
-        for message,username in rows
+        MessageResponse(
+            id=msg.id,
+            room_id=msg.room_id,
+            nonce=msg.nonce,
+            body=msg.body,
+            created_at=msg.created_at.isoformat(),
+            edited_at=msg.edited_at.isoformat() if msg.edited_at else None,
+            user=MessageUserResponse(
+                id=msg.user.id if msg.user else 0,
+                username=msg.user.username if msg.user else "Unknown",
+                display_name=msg.user.display_name if msg.user else "Unknown User",
+                avatar_url=msg.user.avatar_url if msg.user else None
+            )
+        )
+        for msg in messages
     ]
 
 
-@router.post(
-    "/rooms/{room_id}/messages",
-    response_model=MessageResponse,
-    status_code=201,
+
+@router.post("/rooms/{room_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED,
     summary="Send message",
     description="Sending the message by REST API with deduplication",
     responses={
@@ -188,25 +187,25 @@ async def post_message(
         - body: 1-4096 characters, not empty
         - nonce: optional, 1-25 characters or NONE
         - enforce_nonce: Requires the presence of a nonce
-
-    Returns:
-        MessageResponse: Created or existing message
-
-    Raises:
-        HTTPException 409: Duplicated nonce at enforce_nonce=true
-        HTTPException 400: Fields validation error
     """
     msg = await create_message_with_nonce(
         db=db,
         room_id=room_id,
         user_id=current_user.id,
-        payload=payload)
-    return {
-        "id": msg.id,
-        "room_id": msg.room_id,
-        "user_id": msg.user_id,
-        "author": current_user.username,
-        "nonce": msg.nonce,
-        "body": msg.body,
-        "created_at": msg.created_at.isoformat(),
-    }
+        payload=payload
+    )
+
+    return MessageResponse (
+        id=msg.id,
+        room_id=msg.room_id,
+        nonce=msg.nonce,
+        body=msg.body,
+        created_at=msg.created_at.isoformat(),
+        edited_at=msg.edited_at.isoformat() if msg.edited_at else None,
+        user=MessageUserResponse(
+            id=current_user.id,
+            username=current_user.username,
+            display_name=current_user.display_name,
+            avatar_url=current_user.avatar_url
+        )
+    )
