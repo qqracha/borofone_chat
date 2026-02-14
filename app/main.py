@@ -12,16 +12,16 @@ from app.api.http import router as http_router
 from app.api.ws import router as ws_router
 from app.api.auth import router as auth_router
 from app.api.admin import router as admin_router
+from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Migrations are applied manually via alembic upgrade
-    # All the code before yield is executed before the application starts,
-    # the part after yield is executed when the server is shut down.
     yield
 
     # Shutdown
-    await redis_client.aclose() # Close Redis клиента
+    from app.infra.redis import close_redis
+    await close_redis()  # ← Добавь
     await engine.dispose() # Close connection pool with SQLAlchemy
 
 app = FastAPI(
@@ -38,6 +38,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# prod CORS
+# from fastapi.middleware.cors import CORSMiddleware
+#
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=[
+#         "https://your-domain.com"
+#     ],
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+#
 @app.get("/")
 async def root():
     return {"tomato": True} # Stub for quickly testing API startup

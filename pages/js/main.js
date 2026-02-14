@@ -3,9 +3,6 @@
 // ==========================================
 
 function resolveApiBase() {
-    const stored = localStorage.getItem('api_base');
-    if (stored) return stored.replace(/\/$/, '');
-
     const url = new URL(window.location.href);
 
     if (url.protocol === 'file:') {
@@ -57,41 +54,64 @@ const cancelModalBtn = document.getElementById('cancelModalBtn');
 const settingsBtn = document.getElementById('settingsBtn');
 
 // ==========================================
-// AUTH FUNCTIONS
+// AUTH FUNCTIONS (с использованием cookies)
 // ==========================================
-
-function getAccessToken() {
-    return localStorage.getItem('access_token');
-}
-
-function getRefreshToken() {
-    return localStorage.getItem('refresh_token');
-}
-
-function getAuthHeaders() {
-    const token = getAccessToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 function redirectToLogin() {
     window.location.href = './login.html';
 }
 
-async function refreshAccessToken() {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) return false;
+async function fetchWithAuth(url, options = {}) {
+    /**
+     * Fetch с автоматической отправкой cookies.
+     *
+     * Cookies отправляются автоматически браузером,
+     * но нужно указать credentials: 'include' для cross-origin запросов.
+     */
+    const response = await fetch(url, {
+        ...options,
+        credentials: 'include',  // Важно! Отправляет cookies
+        headers: {
+            ...(options.headers || {}),
+        }
+    });
 
+    // Если 401, пробуем обновить токен
+    if (response.status === 401) {
+        const refreshed = await refreshAccessToken();
+        if (!refreshed) {
+            redirectToLogin();
+            return response;
+        }
+
+        // Повторяем запрос
+        return fetch(url, {
+            ...options,
+            credentials: 'include',
+            headers: {
+                ...(options.headers || {}),
+            }
+        });
+    }
+
+    return response;
+}
+
+async function refreshAccessToken() {
+    /**
+     * Обновление access токена через refresh токен.
+     *
+     * Refresh токен автоматически отправляется в cookie.
+     */
     try {
         const response = await fetch(`${API_URL}/auth/refresh`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: refreshToken })
+            credentials: 'include',  // Отправляет refresh_token cookie
         });
 
         if (!response.ok) return false;
 
-        const data = await response.json();
-        localStorage.setItem('access_token', data.access_token);
+        // Новый access_token установлен в cookie автоматически
         return true;
     } catch (err) {
         console.error('Failed to refresh token:', err);
@@ -99,33 +119,12 @@ async function refreshAccessToken() {
     }
 }
 
-async function fetchWithAuth(url, options = {}) {
-    const response = await fetch(url, {
-        ...options,
-        headers: {
-            ...(options.headers || {}),
-            ...getAuthHeaders()
-        }
-    });
-
-    if (response.status !== 401) return response;
-
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) {
-        redirectToLogin();
-        return response;
-    }
-
-    return fetch(url, {
-        ...options,
-        headers: {
-            ...(options.headers || {}),
-            ...getAuthHeaders()
-        }
-    });
-}
-
 async function loadCurrentUser() {
+    /**
+     * Загрузка информации о текущем пользователе.
+     *
+     * Токен автоматически отправляется из cookie.
+     */
     try {
         const response = await fetchWithAuth(`${API_URL}/auth/me`);
         if (!response.ok) return null;
@@ -195,7 +194,6 @@ async function loadRooms() {
         renderRooms();
     } catch (err) {
         console.error('Failed to load rooms:', err);
-        // Fallback to default room
         rooms = [{ id: 1, title: 'general' }];
         renderRooms();
     }
@@ -271,7 +269,6 @@ function addMessage(msg, animate = false) {
 
     const author = msg.user?.display_name || msg.author || 'Unknown';
     const username = msg.user?.username || 'unknown';
-    const avatarUrl = msg.user?.avatar_url;
     const authorInitial = author[0].toUpperCase();
 
     const time = new Date(msg.created_at).toLocaleTimeString('ru-RU', {
@@ -279,24 +276,8 @@ function addMessage(msg, animate = false) {
         minute: '2-digit'
     });
 
-    let avatarContent;
-    if (avatarUrl) {
-        // Исправляем путь, если он относительный
-        const fullAvatarUrl = avatarUrl.startsWith('http') ? avatarUrl : `${API_URL}${avatarUrl}`;
-        avatarContent = `<img src="${fullAvatarUrl}" alt="${authorInitial}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`;
-    } else {
-        avatarContent = authorInitial;
-    }
-
-    // ВОТ ТУТ ИЗМЕНЕНИЕ: добавили border: none; box-shadow: none;
-    const avatarStyle = avatarUrl
-        ? 'background: none; padding: 0; border: none; box-shadow: none;'
-        : '';
-
     messageEl.innerHTML = `
-        <div class="message-avatar" style="${avatarStyle}">
-            ${avatarContent}
-        </div>
+        <div class="message-avatar">${authorInitial}</div>
         <div class="message-content">
             <div class="message-header">
                 <span class="message-author">${escapeHtml(author)}</span>
@@ -325,10 +306,7 @@ async function sendMessage() {
     const text = messageInput.value.trim();
     if (!text || !currentRoom) return;
 
-    // FIX: Generate a shorter nonce (< 25 chars).
-    // Date.now() is 13 chars. Random string (8 chars) ensures uniqueness.
-    // Total: ~21 chars, well within the 25-char limit.
-    const nonce = Date.now().toString() + Math.random().toString(36).slice(2, 10);
+    const nonce = Date.now().toString() + Math.random().toString(36);
 
     try {
         const response = await fetchWithAuth(`${API_URL}/rooms/${currentRoom}/messages`, {
@@ -336,39 +314,35 @@ async function sendMessage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 body: text,
-                nonce: nonce,
-                // Note: user_id is handled by the backend from the token
+                nonce: nonce
             })
         });
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Failed to send message');
-        }
+        if (!response.ok) throw new Error('Failed to send message');
 
-        // Success
         messageInput.value = '';
         sendBtn.disabled = true;
-
-        // Optimistically add message or wait for WebSocket/Polling
-        // (If strictly REST without WS, you might want to call loadMessages(currentRoom) here)
-
     } catch (err) {
         console.error('Failed to send message:', err);
-        alert('Не удалось отправить сообщение: ' + err.message);
+        alert('Не удалось отправить сообщение');
     }
 }
 
-
 // ==========================================
-// WEBSOCKET
+// WEBSOCKET (с автоматической отправкой cookies)
 // ==========================================
 
 function connectWebSocket(roomId) {
+    /**
+     * WebSocket подключение.
+     *
+     * ВАЖНО: Cookies отправляются автоматически для same-origin WebSocket!
+     * Для cross-origin нужно использовать ?token=... query параметр.
+     */
     if (ws) ws.close();
 
-    const token = getAccessToken();
-    const wsUrl = `${WS_URL}/ws/rooms/${roomId}?token=${token}`;
+    // Cookies отправляются автоматически браузером
+    const wsUrl = `${WS_URL}/ws/rooms/${roomId}`;
 
     ws = new WebSocket(wsUrl);
 
@@ -385,6 +359,11 @@ function connectWebSocket(roomId) {
                 addMessage(data, true);
             } else if (data.type === 'error') {
                 console.error('WebSocket error:', data.detail);
+                if (data.code === 'unauthorized') {
+                    redirectToLogin();
+                }
+            } else if (data.type === 'connected') {
+                console.log('Connected to room:', data.room_id);
             }
         } catch (err) {
             console.error('Failed to parse WebSocket message:', err);
@@ -460,13 +439,7 @@ settingsBtn.addEventListener('click', () => {
 // ==========================================
 
 async function init() {
-    // Check auth
-    if (!getAccessToken()) {
-        redirectToLogin();
-        return;
-    }
-
-    // Load user
+    // Load user (токен из cookie автоматически)
     currentUser = await loadCurrentUser();
     if (!currentUser) {
         redirectToLogin();

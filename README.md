@@ -9,6 +9,7 @@
 pip install -r requirements.txt
 ```
 ### 2. Поднять бд и редис
+
 ```bash
 docker compose -f docker-compose.infra.yml up -d
 ```

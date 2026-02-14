@@ -1,170 +1,247 @@
 """
-WebSocket endpoints for real-time чата.
+WebSocket endpoint с аутентификацией через cookies.
 
-Used Pydantic MessageCreate for validation input messages.
+Изменения:
+- Токен читается из cookie вместо query параметра
+- Fallback на query параметр для совместимости
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, status
-from pydantic import ValidationError
+from fastapi import APIRouter, Cookie, Depends, Query, WebSocket, WebSocketDisconnect
+from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis
 
-from app.infra.db import SessionLocal
+from app.infra.db import get_db
+from app.infra.redis import get_redis
 from app.models import User
-from app.security import get_user_id_from_token
 from app.schemas.messages import MessageCreate
+from app.security import get_user_id_from_token
 from app.services.messages import create_message_with_nonce
 
-router = APIRouter()
+router = APIRouter(tags=["WebSocket"])
 
 
-class ConnectionManager:
+async def get_user_from_websocket(
+    websocket: WebSocket,
+    db: AsyncSession,
+    token_cookie: str | None = None,
+    token_query: str | None = None
+) -> User | None:
     """
-    Manager WebSocket connections.
+    Получение пользователя из WebSocket соединения.
 
-    IMPORTANT: Only works within a single process.
-    Redis Pub/Sub is required for horizontal scaling.
+    Приоритет:
+    1. Cookie (access_token)
+    2. Query параметр (token) - fallback
+
+    Args:
+        websocket: WebSocket connection
+        db: Database session
+        token_cookie: Токен из cookie
+        token_query: Токен из query параметра
+
+    Returns:
+        User или None если токен невалидный
     """
+    token = token_cookie or token_query
 
-    def __init__(self) -> None:
-        # room_id -> set of WebSocket connections
-        self._rooms: dict[int, set[WebSocket]] = {}
+    if not token:
+        return None
 
-    async def connect(self, ws: WebSocket, room_id: int) -> None:
-        await ws.accept()
-        self._rooms.setdefault(room_id, set()).add(ws)
+    user_id = get_user_id_from_token(token)
+    if not user_id:
+        return None
 
-    def disconnect(self, ws: WebSocket, room_id: int) -> None:
-        room = self._rooms.get(room_id)
-        if not room:
-            return
-        room.discard(ws)
-        if not room:
-            self._rooms.pop(room_id, None)
+    user = await db.get(User, user_id)
+    if not user or not user.is_active:
+        return None
 
-    async def broadcast(self, room_id: int, payload: dict) -> None:
-        """
-        Broadcast messages to all clients in the room.
-
-        Automatically removes dead connections.
-        """
-        room = self._rooms.get(room_id, set())
-        dead: list[WebSocket] = []
-
-        for ws in room:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                dead.append(ws)
-
-        for ws in dead:
-            self.disconnect(ws, room_id)
-
-
-manager = ConnectionManager()
+    return user
 
 
 @router.websocket("/ws/rooms/{room_id}")
-async def ws_room(ws: WebSocket, room_id: int):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    token: str = Query(None),  # Fallback для старых клиентов
+):
     """
-    WebSocket endpoint for real-time message trade.
+    WebSocket endpoint для real-time чата.
 
-    Read protocol from ws_protocol docs
+    ВАЖНО: Redis получаем внутри, т.к. WebSocket dependencies работают иначе.
     """
-    token = ws.query_params.get("token")
 
-    if not token:
-        await ws.accept()
-        await ws.send_json({
+    await websocket.accept()
+
+    # Получаем токен из cookie
+    token_cookie = websocket.cookies.get("access_token")
+
+    # Аутентификация
+    user = await get_user_from_websocket(
+        websocket,
+        db,
+        token_cookie=token_cookie,
+        token_query=token
+    )
+
+    if not user:
+        await websocket.send_json({
             "type": "error",
-            "code": status.HTTP_401_UNAUTHORIZED,
-            "detail": "Missing token",
+            "code": "unauthorized",
+            "detail": "Authentication required"
         })
-        await ws.close(code=1008)
+        await websocket.close()
         return
 
+    username = user.username
+
     try:
-        async with SessionLocal() as db:
-            user_id = get_user_id_from_token(token)
-            if user_id is None:
-                await ws.accept()
-                await ws.send_json({
-                    "type": "error",
-                    "code": status.HTTP_401_UNAUTHORIZED,
-                    "detail": "Invalid or expired token",
-                })
-                await ws.close(code=1008)
+        from app.infra.redis import redis_client
+        redis = redis_client
+
+        # Проверяем что Redis работает
+        if redis:
+            await redis.ping()
+    except Exception as e:
+        print(f"⚠️ Redis unavailable in WebSocket: {e}")
+        redis = None
+
+    # Subscribe to Redis channel
+    channel_name = f"room:{room_id}"
+
+    if redis:
+        try:
+            pubsub = redis.pubsub()
+            await pubsub.subscribe(channel_name)
+        except Exception as e:
+            print(f"⚠️ Could not subscribe to Redis channel: {e}")
+            pubsub = None
+
+    print(f"[WebSocket] User {username} connected to room {room_id}")
+
+    try:
+        # Send welcome message
+        await websocket.send_json({
+            "type": "connected",
+            "room_id": room_id,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "display_name": user.display_name
+            }
+        })
+
+        # Handle messages
+        import asyncio
+
+        async def receive_messages():
+            """Receive messages from client."""
+            try:
+                while True:
+                    data = await websocket.receive_json()
+
+                    if data.get("type") == "message":
+                        # Validate and save message
+                        try:
+                            payload = MessageCreate(
+                                body=data.get("body", ""),
+                                nonce=data.get("nonce")
+                            )
+
+                            msg = await create_message_with_nonce(
+                                db=db,
+                                room_id=room_id,
+                                user_id=user.id,
+                                payload=payload,
+                                redis=redis
+                            )
+
+                            # Publish to Redis (если доступен)
+                            if redis:
+                                try:
+                                    await redis.publish(
+                                        channel_name,
+                                        {
+                                            "type": "message",
+                                            "id": msg.id,
+                                            "room_id": msg.room_id,
+                                            "nonce": msg.nonce,
+                                            "body": msg.body,
+                                            "created_at": msg.created_at.isoformat(),
+                                            "edited_at": None,
+                                            "user": {
+                                                "id": user.id,
+                                                "username": user.username,
+                                                "display_name": user.display_name,
+                                                "avatar_url": user.avatar_url
+                                            }
+                                        }
+                                    )
+                                except Exception as e:
+                                    print(f"⚠️ Could not publish to Redis: {e}")
+                                    # Fallback: отправляем напрямую через WebSocket
+                                    await websocket.send_json({
+                                        "type": "message",
+                                        "id": msg.id,
+                                        "room_id": msg.room_id,
+                                        "nonce": msg.nonce,
+                                        "body": msg.body,
+                                        "created_at": msg.created_at.isoformat(),
+                                        "edited_at": None,
+                                        "user": {
+                                            "id": user.id,
+                                            "username": user.username,
+                                            "display_name": user.display_name,
+                                            "avatar_url": user.avatar_url
+                                        }
+                                    })
+
+                        except ValueError as e:
+                            await websocket.send_json({
+                                "type": "error",
+                                "code": "validation_error",
+                                "detail": str(e)
+                            })
+                        except Exception as e:
+                            print(f"[WebSocket] Error creating message: {e}")
+                            await websocket.send_json({
+                                "type": "error",
+                                "code": "internal_error",
+                                "detail": "Failed to send message"
+                            })
+            except WebSocketDisconnect:
+                pass
+
+        async def send_messages():
+            """Send messages from Redis to client."""
+            if not pubsub:
+                # Если нет Redis - просто ждём
+                try:
+                    while True:
+                        await asyncio.sleep(1)
+                except WebSocketDisconnect:
+                    pass
                 return
 
-            current_user = await db.get(User, user_id)
-            if current_user is None or not current_user.is_active:
-                await ws.accept()
-                await ws.send_json({
-                    "type": "error",
-                    "code": status.HTTP_401_UNAUTHORIZED,
-                    "detail": "User not found or disabled",
-                })
-                await ws.close(code=1008)
-                return
+            try:
+                while True:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message and message['type'] == 'message':
+                        await websocket.send_text(message['data'])
+                    await asyncio.sleep(0.01)
+            except WebSocketDisconnect:
+                pass
 
-            await manager.connect(ws, room_id)
-
-            while True:
-                data = await ws.receive_json()
-
-                # Validation by Pydentic
-                try:
-                    payload = MessageCreate(**data)
-                except ValidationError as e:
-                    await ws.send_json({
-                        # Pydantic validation failed
-                        "type": "error",
-                        "code": "validation_error",
-                        "detail": e.errors()
-                    })
-                    continue
-
-                # Creating message
-                try:
-                    msg = await create_message_with_nonce(
-                        db=db,
-                        room_id=room_id,
-                        user_id=current_user.id,
-                        payload=payload
-                    )
-                except HTTPException as e:
-                    # Service error (For example: nonce conflict)
-                    await ws.send_json({
-                        "type": "error",
-                        "code": e.status_code,
-                        "detail": e.detail
-                    })
-                    continue
-                except Exception as e:
-                    # Unexpected error
-                    import logging
-                    logging.exception("Failed to create message via WebSocket")
-
-                    await ws.send_json({
-                        "type": "error",
-                        "code": 500,
-                        "detail": "internal server error"
-                    })
-                    continue
-
-                # Broadcast
-                # Send a new message to all clients in the room
-                await manager.broadcast(
-                    room_id,
-                    {
-                        "type": "message.new",
-                        "message": {
-                            "id": msg.id,
-                            "room_id": msg.room_id,
-                            "user_id": msg.user_id,
-                            "nonce": msg.nonce,
-                            "body": msg.body,
-                            "created_at": msg.created_at.isoformat(),
-                        },
-                    },
-                )
+        # Run both tasks concurrently
+        await asyncio.gather(
+            receive_messages(),
+            send_messages()
+        )
 
     except WebSocketDisconnect:
-        manager.disconnect(ws, room_id)
+        print(f"[WebSocket] User {username} disconnected from room {room_id}")
+    except Exception as e:
+        print(f"[WebSocket] Unexpected error: {e}")
+    finally:
+        if pubsub:
+            await pubsub.unsubscribe(channel_name)
+            await pubsub.close()

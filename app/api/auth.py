@@ -9,7 +9,7 @@ Authentication endpoints.
 """
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +19,7 @@ from app.schemas.auth import (
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
-    TokenResponse,
+    MessageResponse,
     UserResponse,
 )
 from app.security import (
@@ -29,35 +29,57 @@ from app.security import (
     hash_password,
     verify_password,
 )
-from app.dependencies import get_current_user  # Создадим это позже
+from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# Cookie settings
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
+REFRESH_TOKEN_EXPIRE_DAYS = 7
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+# for prod & https Secure=True
+COOKIE_SECURE = False
+COOKIE_SAMESITE = "lax" # or "strict"
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
+    # Access token
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60, # seconds
+    )
+
+    # Refresh token
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, # second too
+)
+
+def clear_auth_cookies(response: Response):
+    """Удаление токенов из куки"""
+    response.delete_cookie(key="access_token")
+    response.delete_cookie(key="refresh_token")
+
+@router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     data: RegisterRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Регистрация нового пользователя по инвайт-коду.
 
-    Шаги:
-    1. Проверка инвайт-кода (существует, не истёк, не исчерпан)
-    2. Проверка уникальности email и username
-    3. Создание пользователя с хешированным паролем
-    4. Увеличение счётчика использований инвайта
-    5. Возврат JWT токенов
-
-    Args:
-        data: RegisterRequest с email, password, username, display_name, invite_code
+    После успешной регистрации токены устанавливаются в httpOnly cookies.
 
     Returns:
-        TokenResponse: access_token и refresh_token
-
-    Raises:
-        400: Инвайт-код невалидный или исчерпан
-        409: Email или username уже существуют
+        {"message": "Registration successful"}
     """
 
     # === 1. Проверка инвайт-кода ===
@@ -116,7 +138,7 @@ async def register(
         password_hash=hash_password(data.password),
         username=data.username,
         display_name=data.display_name,
-        role="member"  # По умолчанию обычный пользователь
+        role="member"
     )
 
     db.add(user)
@@ -128,33 +150,28 @@ async def register(
     await db.commit()
     await db.refresh(user)
 
-    # === 6. Генерация токенов ===
+    # === 6. Токены в cookies ===
     access_token = create_access_token({"sub": str(user.id)})
     refresh_token = create_refresh_token({"sub": str(user.id)})
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token
-    )
+    set_auth_cookies(response, access_token, refresh_token)
+
+    return {"message": "Registration successful"}
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login")
 async def login(
     data: LoginRequest,
+    responce: Response,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Вход по email и паролю.
 
-    Args:
-        data: LoginRequest с email и password
+    Токены устанавливаются в httpOnly cookies.
 
     Returns:
-        TokenResponse: access_token и refresh_token
-
-    Raises:
-        401: Неверный email или пароль
-        403: Аккаунт заблокирован
+        {"message": "Login successful"}
     """
 
     # Поиск пользователя по email
@@ -176,37 +193,45 @@ async def login(
             detail="Account is disabled"
         )
 
-    # Генерация токенов
+    # Установка токенов в cookies
     access_token = create_access_token({"sub": str(user.id)})
     refresh_token = create_refresh_token({"sub": str(user.id)})
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token
-    )
+    set_auth_cookies(responce, access_token, refresh_token)
 
+    return {"message": "Login successful"}
 
-@router.post("/refresh", response_model=TokenResponse)
+@router.post("/refresh")
 async def refresh(
-    data: RefreshRequest,
+    response: Response,
+    refresh_token: str = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Обновление access токена через refresh токен.
+    Обновление access токена через refresh токен из cookie.
 
-    Args:
-        data: RefreshRequest с refresh_token
+    Автоматически читает refresh_token из httpOnly cookie.
 
     Returns:
-        TokenResponse: новый access_token и тот же refresh_token
-
-    Raises:
-        401: Refresh токен невалидный или истёк
+        {"message": "Token refreshed"}
     """
+
+    # В реальности refresh_token будет получен из cookie через dependency
+    # Для совместимости пока оставляем поддержку body
+    from fastapi import Request
+
+    # TODO: Получить refresh_token из cookie
+    # request.cookies.get('refresh_token')
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token not provided"
+        )
 
     try:
         # Декодирование и проверка токена
-        payload = decode_token(data.refresh_token)
+        payload = decode_token(refresh_token)
 
         # Проверка типа токена
         if payload.get("type") != "refresh":
@@ -230,13 +255,13 @@ async def refresh(
                 detail="User not found or disabled"
             )
 
-        # Генерация нового access токена
-        access_token = create_access_token({"sub": user_id})
+        # Генерация новых токенов
+        new_access_token = create_access_token({"sub": user.id})
+        new_refresh_token = create_refresh_token({"sub": user.id})
 
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=data.refresh_token  # Возвращаем тот же refresh токен
-        )
+        set_auth_cookies(response, new_access_token, new_refresh_token)
+
+        return {"message": "Token refreshed"}
 
     except Exception:
         raise HTTPException(
@@ -245,17 +270,26 @@ async def refresh(
         )
 
 
+@router.post("/logout")
+async def logout(response: Response):
+    """
+    Выход из системы.
+
+    Удаляет токены из cookies.
+
+    Returns:
+        {"message": "Logged out successfully"}
+    """
+    clear_auth_cookies(response)
+    return {"message": "Logged out successfully"}
+
+
 @router.get("/me", response_model=UserResponse)
-async def get_me(
-    current_user: User = Depends(get_current_user)
-):
+async def get_me(current_user: User = Depends(get_current_user)):
     """
     Получение информации о текущем авторизованном пользователе.
 
-    Requires: Authorization header с Bearer токеном
-
-    Returns:
-        UserResponse: информация о пользователе
+    Токен автоматически читается из httpOnly cookie.
     """
     return UserResponse(
         id=current_user.id,

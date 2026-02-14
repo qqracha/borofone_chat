@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+from redis.asyncio import Redis
 
+from app.dependencies import get_current_user
 from app.infra.db import get_db
-from app.infra.redis import ping_redis
+from app.infra.redis import get_redis
 from app.models import Message, Room, User
 from app.schemas.common import HealthResponse
 from app.schemas.rooms import RoomCreate, RoomResponse
@@ -19,28 +21,6 @@ from app.services.messages import create_message_with_nonce
 from app.dependencies import get_current_user, require_admin
 
 router = APIRouter()
-
-
-@router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="Health Check",
-    description="Check service health (PostgresSQL and Redis)"
-)
-async def health(db: AsyncSession = Depends(get_db)):
-    """
-    Health-check endpoint for monitoring.
-
-    - **PostgreSQL** - SELECT 1
-    - **Redis** - PING
-
-    Returns:
-        HealthResponse: {"ok": true, "redis": true/false}
-    """
-    await db.execute(select(1))
-    redis_ok = await ping_redis()
-    return {"ok": True, "redis": redis_ok}
-
 
 @router.post(
     "/rooms",
@@ -175,6 +155,7 @@ async def post_message(
     payload: MessageCreate,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis)
 ):
     """
     Sending a message to a room.
@@ -192,7 +173,8 @@ async def post_message(
         db=db,
         room_id=room_id,
         user_id=current_user.id,
-        payload=payload
+        payload=payload,
+        redis=redis
     )
 
     return MessageResponse (
