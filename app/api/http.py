@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from redis.asyncio import Redis
 
 from app.dependencies import get_current_user
@@ -16,7 +16,7 @@ from app.infra.redis import get_redis
 from app.models import Message, Room, User
 from app.schemas.common import HealthResponse
 from app.schemas.rooms import RoomCreate, RoomResponse
-from app.schemas.messages import MessageCreate, MessageResponse, MessageUserResponse
+from app.schemas.messages import MessageCreate, MessageResponse, MessageUserResponse, AttachmentResponse
 from app.services.messages import create_message_with_nonce
 from app.dependencies import get_current_user, require_admin
 
@@ -83,7 +83,7 @@ async def list_messages(
     stmt = (
         select(Message)
         .where(Message.room_id == room_id)
-        .options(joinedload(Message.user))
+        .options(joinedload(Message.user), selectinload(Message.attachments))
         .order_by(Message.id.desc())
         .limit(limit)
     )
@@ -104,7 +104,19 @@ async def list_messages(
                 username=msg.user.username if msg.user else "Unknown",
                 display_name=msg.user.display_name if msg.user else "Unknown User",
                 avatar_url=msg.user.avatar_url if msg.user else None
-            )
+            ),
+            attachments=[
+                AttachmentResponse(
+                    id=att.id,
+                    message_id=att.message_id,
+                    filename=att.filename,
+                    file_path=att.file_path,
+                    file_size=att.file_size,
+                    mime_type=att.mime_type,
+                    created_at=att.created_at.isoformat(),
+                )
+                for att in (msg.attachments or [])
+            ],
         )
         for msg in messages
     ]
@@ -174,7 +186,8 @@ async def post_message(
         room_id=room_id,
         user_id=current_user.id,
         payload=payload,
-        redis=redis
+        redis=redis,
+        attachments_data=payload.attachments  # Передаём вложения
     )
 
     return MessageResponse (
@@ -189,5 +202,18 @@ async def post_message(
             username=current_user.username,
             display_name=current_user.display_name,
             avatar_url=current_user.avatar_url
-        )
+        ),
+        # ... existing fields ...
+        attachments=[
+            AttachmentResponse(
+                id=att.id,
+                message_id=att.message_id,
+                filename=att.filename,
+                file_path=att.file_path,
+                file_size=att.file_size,
+                mime_type=att.mime_type,
+                created_at=att.created_at.isoformat(),
+            )
+            for att in (msg.attachments or [])
+        ],
     )

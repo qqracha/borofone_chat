@@ -7,7 +7,7 @@ SQLAlchemy модели для приложения.
 - Room: комнаты чата
 - Message: сообщения (теперь с привязкой к User)
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
@@ -214,7 +214,38 @@ class Message(Base):
     # Relationships
     user: Mapped[Optional["User"]] = relationship("User", back_populates="messages")
     room: Mapped["Room"] = relationship("Room", back_populates="messages")
+    attachments: Mapped[list["Attachment"]] = relationship(
+        "Attachment",
+        back_populates="message",
+        cascade="all, delete-orphan"
+    )
 
     # Индексы для быстрого поиска
     # CREATE INDEX idx_messages_user_nonce ON messages(user_id, nonce);
     # Создадим в миграции
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str | None] = mapped_column(String(127), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    message: Mapped["Message"] = relationship(
+        "Message",
+        back_populates="attachments"
+    )

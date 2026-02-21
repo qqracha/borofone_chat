@@ -35,6 +35,7 @@ let wsReady = Promise.resolve();  // Promise который резолвится
 let currentUser = null;
 let rooms = [];
 let shouldRemoveAvatar = false;
+let badgesInitialized = false;  // Флаг: badges загружены один раз
 // ==========================================
 // DOM ELEMENTS
 // ==========================================
@@ -179,6 +180,12 @@ async function loadRooms() {
             roomEl.addEventListener('click', () => selectRoom(room.id));
             roomsList.appendChild(roomEl);
         });
+        
+        // Обновляем badges ТОЛЬКО при первой загрузке (не при создании новой комнаты)
+        if (!badgesInitialized) {
+            badgesInitialized = true;
+            updateAllRoomBadges();
+        }
 
         // Auto-select first room
         if (rooms.length > 0 && !currentRoom) {
@@ -197,19 +204,30 @@ async function loadRooms() {
 
 async function createRoom() {
     const title = roomNameInput.value.trim();
-
     if (!title) return;
 
     try {
-        const response = await fetchWithAuth(`${API_URL}/rooms`, {
+        const response = await fetch(`${API_URL}/rooms`, {
             method: 'POST',
+            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title })
+            body: JSON.stringify({ title }),
         });
 
+        if (response.status === 403) {
+            alert('Только администраторы могут создавать комнаты');
+            closeModal();
+            return;
+        }
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
         if (!response.ok) {
-            const error = await response.json();
-            alert(error.detail || 'Failed to create room');
+            const error = await response.json().catch(() => ({}));
+            alert(error.detail || 'Не удалось создать комнату');
             return;
         }
 
@@ -218,7 +236,7 @@ async function createRoom() {
         await loadRooms();
     } catch (err) {
         console.error('Failed to create room:', err);
-        alert('Network error');
+        alert('Ошибка сети');
     }
 }
 
@@ -239,9 +257,12 @@ function selectRoom(roomId) {
     messageInput.placeholder = `Сообщение в #${currentRoom.title}`;
     sendBtn.disabled = false;
 
-    // Load messages and connect WebSocket
+    // Load messages (WebSocket уже подключен глобально)
     loadMessages(roomId);
-    connectWebSocket(roomId);
+    
+    // Start presence tracking для новой комнаты
+    stopPresenceTracking();  // останавливаем старую
+    startPresenceTracking(); // запускаем новую
 }
 
 // ==========================================
@@ -269,8 +290,29 @@ async function loadMessages(roomId) {
                 </div>
             `;
         } else {
-            messages.forEach(msg => addMessage(msg, false));
+            const lastRead = window.notifications ? window.notifications.getLastReadMessageId(roomId) : 0;
+            let unreadDividerAdded = false;
+            
+            messages.forEach(msg => {
+                // Добавляем разделитель перед первым непрочитанным сообщением
+                if (!unreadDividerAdded && lastRead > 0 && msg.id > lastRead) {
+                    const divider = document.createElement('div');
+                    divider.className = 'unread-divider';
+                    divider.innerHTML = '<span>Новые сообщения</span>';
+                    messagesList.appendChild(divider);
+                    unreadDividerAdded = true;
+                }
+                
+                addMessage(msg, false);
+            });
+            
             scrollToBottom();
+            
+            // Отмечаем комнату как прочитанную
+            if (window.notifications) {
+                window.notifications.markRoomAsRead(messages, roomId);
+                updateRoomBadge(roomId, 0);
+            }
         }
     } catch (err) {
         console.error('Failed to load messages:', err);
@@ -293,6 +335,8 @@ function addMessage(msg, animate = false) {
     const messageEl = document.createElement('div');
     messageEl.className = 'message' + (animate ? ' message-new' : '');
     messageEl.dataset.messageId = msg.id;
+    
+    // message-unread больше не нужен — оставляем только divider
 
     const author = msg.user?.display_name || msg.author || 'Unknown';
     const username = msg.user?.username || 'unknown';
@@ -303,6 +347,15 @@ function addMessage(msg, animate = false) {
         hour: '2-digit',
         minute: '2-digit'
     });
+
+    // Рендерим вложения если есть
+    const attachmentsHtml = window.attachments 
+        ? window.attachments.renderMessageAttachments(msg.attachments) 
+        : '';
+    
+    // Скрываем текст если пустой и есть вложения
+    const bodyText = msg.body ? escapeHtml(msg.body) : '';
+    const bodyHtml = bodyText ? `<div class="message-text">${bodyText}</div>` : '';
 
     messageEl.innerHTML = `
         <div class="message-avatar">
@@ -316,7 +369,8 @@ function addMessage(msg, animate = false) {
                 <span class="message-username">@${escapeHtml(username)}</span>
                 <span class="message-time">${time}</span>
             </div>
-            <div class="message-text">${escapeHtml(msg.body)}</div>
+            ${bodyHtml}
+            ${attachmentsHtml}
         </div>
     `;
 
@@ -389,7 +443,10 @@ function escapeHtml(text) {
 
 async function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text || !currentRoom) return;
+    const hasAttachments = window.attachments && window.attachments.getAttachmentsToSend().length > 0;
+    
+    if (!text && !hasAttachments) return;
+    if (!currentRoom) return;
 
     const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
@@ -397,27 +454,61 @@ async function sendMessage() {
     messageInput.value = '';
 
     try {
+        // Загружаем вложения если есть
+        let uploadedAttachments = [];
+        if (hasAttachments) {
+            try {
+                uploadedAttachments = await window.attachments.uploadAttachments();
+            } catch (err) {
+                console.error('[sendMessage] Failed to upload attachments:', err);
+                alert('Не удалось загрузить вложения');
+                messageInput.value = text;
+                return;
+            }
+        }
+
         // Ждём открытия WS (актуально при смене комнаты)
         await wsReady;
 
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
                 type: 'message',
-                body: text,
+                room_id: currentRoom.id,
+                body: text || '',  // Пустая строка допустима если есть вложения
                 nonce: nonce,
+                attachments: uploadedAttachments,
             }));
+            
+            // Очищаем вложения после отправки
+            if (window.attachments) {
+                window.attachments.clearAttachments();
+            }
+            
+            // Своё сообщение — сразу обновляем lastRead (оптимистично)
+            // Когда придёт через WS с ID — обновим снова
+            markCurrentRoomAsRead();
         } else {
             // WS недоступен — HTTP fallback
             console.warn('[sendMessage] WS not open, using HTTP fallback');
             const response = await fetchWithAuth(`${API_URL}/rooms/${currentRoom.id}/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ body: text, nonce: nonce }),
+                body: JSON.stringify({ 
+                    body: text || '',  // Пустая строка допустима если есть вложения
+                    nonce: nonce,
+                    attachments: uploadedAttachments 
+                }),
             });
 
             if (!response.ok) throw new Error('Failed to send message');
 
             const msg = await response.json();
+            
+            // Очищаем вложения после отправки
+            if (window.attachments) {
+                window.attachments.clearAttachments();
+            }
+            
             // HTTP fallback — добавляем сразу сами, WS не пришлёт
             if (!messagesList.querySelector(`[data-message-id="${msg.id}"]`)) {
                 addMessage(msg, true);
@@ -435,67 +526,76 @@ async function sendMessage() {
 // WEBSOCKET
 // ==========================================
 
-function connectWebSocket(roomId) {
-    // Закрываем старый WS и ждём его закрытия перед открытием нового.
-    // Без этого при быстрой смене комнат старый WS ещё не закрыт,
-    // новый ещё не открыт — sendMessage теряет сообщения.
-    const oldWs = ws;
-    ws = null;
+// Подключаемся к глобальному WS ОДИН РАЗ при загрузке
+function connectWebSocket() {
+    if (ws) return; // уже подключены
+    
     wsReady = new Promise((resolve) => {
-        const open = () => {
-            const wsUrl = `${WS_URL}/ws/rooms/${roomId}`;
-            const socket = new WebSocket(wsUrl);
+        const wsUrl = `${WS_URL}/ws`;
+        const socket = new WebSocket(wsUrl);
 
-            socket.onopen = () => {
-                console.log(`[WS] Connected to room ${roomId}`);
-                updateConnectionStatus('connected');
-                ws = socket;
-                resolve();
-            };
+        socket.onopen = () => {
+            console.log('[WS] Connected globally');
+            updateConnectionStatus('connected');
+            ws = socket;
+            resolve();
+        };
 
-            socket.onmessage = (event) => {
-                // Игнорируем сообщения если этот сокет уже не текущий
-                if (socket !== ws) return;
+        socket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
 
-                try {
-                    const data = JSON.parse(event.data);
-
-                    if (data.type === 'message') {
-                        // Не дублируем: сообщение могло уже прийти через HTTP fallback
+                if (data.type === 'message') {
+                    // Если сообщение в ТЕКУЩЕЙ комнате — добавляем в DOM
+                    if (currentRoom && data.room_id === currentRoom.id) {
                         if (!messagesList.querySelector(`[data-message-id="${data.id}"]`)) {
                             addMessage(data, true);
                         }
-                    } else if (data.type === 'error') {
-                        console.error('[WS] error:', data.detail);
-                        if (data.code === 'unauthorized') redirectToLogin();
-                    } else if (data.type === 'connected') {
-                        console.log('[WS] ready, room:', data.room_id);
+                        
+                        // Если это НАШЕ сообщение — обновляем lastRead с правильным ID
+                        if (data.user?.id === currentUser?.id && window.notifications) {
+                            window.notifications.setLastReadMessageId(currentRoom.id, data.id);
+                        }
                     }
-                } catch (err) {
-                    console.error('[WS] parse error:', err, event.data);
+                    
+                    // Уведомления ТОЛЬКО если сообщение НЕ от меня
+                    if (window.notifications && data.user?.id !== currentUser?.id) {
+                        // Звук
+                        window.notifications.playNotificationSound();
+                        
+                        // Badge
+                        if (data.room_id) {
+                            if (currentRoom && data.room_id === currentRoom.id) {
+                                updateCurrentRoomBadge();
+                            } else {
+                                incrementRoomBadge(data.room_id);
+                            }
+                        }
+                    }
+                } else if (data.type === 'error') {
+                    console.error('[WS] error:', data.detail);
+                    if (data.code === 'unauthorized') redirectToLogin();
+                } else if (data.type === 'connected') {
+                    console.log('[WS] ready');
                 }
-            };
-
-            socket.onerror = (err) => {
-                console.error('[WS] error:', err);
-                updateConnectionStatus('disconnected');
-            };
-
-            socket.onclose = () => {
-                if (socket === ws) {
-                    console.log('[WS] disconnected');
-                    updateConnectionStatus('disconnected');
-                }
-            };
+            } catch (err) {
+                console.error('[WS] parse error:', err);
+            }
         };
 
-        if (oldWs && oldWs.readyState !== WebSocket.CLOSED) {
-            // Ждём закрытия старого, потом открываем новый
-            oldWs.onclose = () => open();
-            oldWs.close();
-        } else {
-            open();
-        }
+        socket.onerror = (err) => {
+            console.error('[WS] error:', err);
+            updateConnectionStatus('disconnected');
+        };
+
+        socket.onclose = () => {
+            console.log('[WS] disconnected');
+            updateConnectionStatus('disconnected');
+            ws = null;
+            
+            // Переподключаемся через 3 секунды
+            setTimeout(() => connectWebSocket(), 3000);
+        };
     });
 }
 
@@ -542,6 +642,11 @@ function renderCurrentUser() {
         : `<span>${initial}</span>`;
 
     if (currentUserAvatar) currentUserAvatar.innerHTML = avatarHtml;
+
+    // Кнопка создания комнаты — только для admin
+    if (createRoomBtn) {
+        createRoomBtn.style.display = currentUser.role === 'admin' ? '' : 'none';
+    }
 }
 
 function openSettingsModal() {
@@ -659,6 +764,277 @@ settingsForm.addEventListener('submit', async (e) => {
     await saveSettings();
 });
 
+document.getElementById('attachBtn').addEventListener('click', () => {
+    if (window.attachments) {
+        window.attachments.openAttachmentDialog();
+    }
+});
+
+// ==========================================
+// PRESENCE (онлайн пользователи)
+// ==========================================
+
+let presenceInterval = null;
+
+/**
+ * Загрузить список онлайн пользователей в текущей комнате.
+ */
+async function loadOnlineUsers() {
+    if (!currentRoom) {
+        document.getElementById('usersCount').textContent = '0';
+        document.getElementById('usersList').innerHTML = `
+            <div class="placeholder-message">
+                <span class="placeholder-icon">👥</span>
+                <p>Выберите комнату</p>
+            </div>
+        `;
+        return;
+    }
+    
+    try {
+        const response = await fetchWithAuth(`${API_URL}/rooms/${currentRoom.id}/online`);
+        
+        if (!response.ok) {
+            throw new Error('Failed to load online users');
+        }
+        
+        const users = await response.json();
+        
+        // Обновляем счётчик
+        document.getElementById('usersCount').textContent = users.length;
+        
+        // Отображаем список
+        const usersList = document.getElementById('usersList');
+        
+        if (users.length === 0) {
+            usersList.innerHTML = `
+                <div class="placeholder-message">
+                    <span class="placeholder-icon">👤</span>
+                    <p>Никого нет онлайн</p>
+                </div>
+            `;
+            return;
+        }
+        
+        usersList.innerHTML = users.map(user => {
+            const displayName = user.display_name || user.username;
+            const avatarUrl = normalizeAvatarUrl(user.avatar_url);
+            const initial = displayName[0]?.toUpperCase() || 'U';
+            
+            const avatarHtml = avatarUrl
+                ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(displayName)}" class="avatar-media">`
+                : `<span>${initial}</span>`;
+            
+            return `
+                <div class="user-item">
+                    <div class="user-avatar">${avatarHtml}</div>
+                    <div class="user-info">
+                        <div class="user-display-name">${escapeHtml(displayName)}</div>
+                        <div class="user-username">@${escapeHtml(user.username)}</div>
+                    </div>
+                    <div class="user-status online"></div>
+                </div>
+            `;
+        }).join('');
+    } catch (err) {
+        console.error('Failed to load online users:', err);
+    }
+}
+
+/**
+ * Heartbeat — сообщаем серверу что мы ещё здесь.
+ */
+async function sendPresenceHeartbeat() {
+    if (!currentRoom || !ws || ws.readyState !== WebSocket.OPEN) return;
+    
+    try {
+        ws.send(JSON.stringify({
+            type: 'heartbeat',
+            room_id: currentRoom.id,
+        }));
+    } catch (err) {
+        console.warn('[Presence] Heartbeat failed:', err);
+    }
+}
+
+/**
+ * Начать отслеживание присутствия в комнате.
+ */
+function startPresenceTracking() {
+    if (presenceInterval) return;
+    
+    // Загружаем онлайн пользователей сразу
+    loadOnlineUsers();
+    
+    // Обновляем каждые 10 секунд
+    presenceInterval = setInterval(() => {
+        loadOnlineUsers();
+        sendPresenceHeartbeat();
+    }, 10000);
+}
+
+/**
+ * Остановить отслеживание присутствия.
+ */
+function stopPresenceTracking() {
+    if (presenceInterval) {
+        clearInterval(presenceInterval);
+        presenceInterval = null;
+    }
+}
+
+// ==========================================
+// BADGES & NOTIFICATIONS
+// ==========================================
+
+/**
+ * Обновить badge для конкретной комнаты.
+ */
+function updateRoomBadge(roomId, count) {
+    const roomEl = roomsList.querySelector(`[data-room-id="${roomId}"]`);
+    if (window.notifications) {
+        window.notifications.updateRoomBadge(roomEl, count);
+    }
+}
+
+/**
+ * Увеличить badge комнаты на 1 (когда пришло новое сообщение в неактивную комнату).
+ */
+function incrementRoomBadge(roomId) {
+    const roomEl = roomsList.querySelector(`[data-room-id="${roomId}"]`);
+    if (!roomEl) return;
+    
+    const badge = roomEl.querySelector('.unread-badge');
+    const current = badge ? parseInt(badge.textContent) || 0 : 0;
+    
+    if (window.notifications) {
+        window.notifications.updateRoomBadge(roomEl, current + 1);
+    }
+}
+
+/**
+ * Отметить текущую комнату как прочитанную (вызывается при отправке сообщения).
+ */
+function markCurrentRoomAsRead() {
+    if (!currentRoom || !window.notifications) return;
+    
+    // Берём все сообщения из DOM
+    const messages = Array.from(messagesList.querySelectorAll('[data-message-id]'))
+        .map(el => ({ id: parseInt(el.dataset.messageId) }));
+    
+    if (messages.length > 0) {
+        window.notifications.markRoomAsRead(messages, currentRoom.id);
+        updateRoomBadge(currentRoom.id, 0);
+    }
+}
+
+/**
+ * Обновить badge текущей открытой комнаты.
+ */
+function updateCurrentRoomBadge() {
+    if (!currentRoom) return;
+    
+    // Получаем все сообщения из DOM
+    const messages = Array.from(messagesList.querySelectorAll('[data-message-id]'))
+        .map(el => ({ id: parseInt(el.dataset.messageId) }));
+    
+    if (window.notifications) {
+        const unread = window.notifications.countUnreadMessages(messages, currentRoom.id);
+        updateRoomBadge(currentRoom.id, unread);
+    }
+}
+
+/**
+ * Обновить badges для всех комнат (вызывается после loadRooms).
+ */
+async function updateAllRoomBadges() {
+    if (!window.notifications) return;
+    
+    for (const room of rooms) {
+        try {
+            // Загружаем сообщения комнаты (без отображения)
+            const response = await fetchWithAuth(`${API_URL}/rooms/${room.id}/messages`);
+            if (!response.ok) continue;
+            
+            const messages = await response.json();
+            const unread = window.notifications.countUnreadMessages(messages, room.id);
+            updateRoomBadge(room.id, unread);
+        } catch (err) {
+            console.warn(`Failed to load messages for room ${room.id}:`, err);
+        }
+    }
+}
+
+// ==========================================
+// POLLING (для уведомлений из других комнат)
+// ==========================================
+
+let pollingInterval = null;
+
+// Храним предыдущие counts чтобы определять НОВЫЕ сообщения
+const previousUnreadCounts = {};
+
+/**
+ * Периодическая проверка новых сообщений во всех комнатах.
+ * 
+ * Запускается после загрузки комнат и работает в фоне.
+ * Проверяет каждые 10 секунд: есть ли новые сообщения.
+ */
+async function startPolling() {
+    if (pollingInterval) return;
+    
+    pollingInterval = setInterval(async () => {
+        if (!window.notifications || !rooms.length) return;
+        
+        for (const room of rooms) {
+            // Пропускаем текущую комнату — там WebSocket работает
+            if (currentRoom && room.id === currentRoom.id) continue;
+            
+            try {
+                const response = await fetch(`${API_URL}/rooms/${room.id}/messages`, {
+                    credentials: 'include',
+                });
+                
+                if (!response.ok) continue;
+                
+                const messages = await response.json();
+                if (messages.length === 0) continue;
+                
+                const lastRead = window.notifications.getLastReadMessageId(room.id);
+                const unreadCount = messages.filter(m => m.id > lastRead).length;
+                
+                const prevCount = previousUnreadCounts[room.id] || 0;
+                
+                // Обновляем badge
+                if (unreadCount > 0) {
+                    updateRoomBadge(room.id, unreadCount);
+                }
+                
+                // Звук только если count УВЕЛИЧИЛСЯ (новое сообщение пришло)
+                if (unreadCount > prevCount) {
+                    const lastMessage = messages[messages.length - 1];
+                    
+                    // Звук только если сообщение не от нас
+                    if (lastMessage.user?.id !== currentUser?.id) {
+                        window.notifications.playNotificationSound();
+                    }
+                }
+                
+                previousUnreadCounts[room.id] = unreadCount;
+            } catch (err) {
+                // Тихо игнорируем ошибки polling
+            }
+        }
+    }, 10000); // каждые 10 секунд
+}
+
+function stopPolling() {
+    if (pollingInterval) {
+        clearInterval(pollingInterval);
+        pollingInterval = null;
+    }
+}
+
 // ==========================================
 // INITIALIZATION
 // ==========================================
@@ -666,6 +1042,9 @@ settingsForm.addEventListener('submit', async (e) => {
 async function init() {
     await loadCurrentUser();
     await loadRooms();
+    
+    // Подключаемся к глобальному WebSocket ОДИН РАЗ
+    connectWebSocket();
 }
 
 init();

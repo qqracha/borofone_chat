@@ -51,7 +51,7 @@ async def global_websocket_endpoint(
 ):
     """
     Глобальный WebSocket — получает события из ВСЕХ комнат.
-    
+
     Клиент:
     - Отправляет: {"type": "message", "room_id": 1, "body": "hi", "nonce": "x"}
     - Получает: {"type": "message", "room_id": 1, "id": 42, ...}
@@ -90,11 +90,11 @@ async def global_websocket_endpoint(
             rooms = result.scalars().all()
 
             pubsub = redis.pubsub()
-            
+
             # Подписываемся на каждую комнату
             for room in rooms:
                 await pubsub.subscribe(f"room:{room.id}")
-            
+
             print(f"[WS] {username} subscribed to {len(rooms)} rooms")
         except Exception as e:
             print(f"[WS] Subscribe failed: {e}")
@@ -116,17 +116,7 @@ async def global_websocket_endpoint(
                 except asyncio.TimeoutError:
                     continue
 
-                msg_type = data.get("type")
-                
-                # Heartbeat — обновление присутствия
-                if msg_type == "heartbeat":
-                    room_id = data.get("room_id")
-                    if room_id:
-                        from app.services.presence import user_joined_room
-                        await user_joined_room(redis, room_id, user.id)
-                    continue
-                
-                if msg_type != "message":
+                if data.get("type") != "message":
                     continue
 
                 room_id = data.get("room_id")
@@ -134,15 +124,8 @@ async def global_websocket_endpoint(
                     continue
 
                 try:
-                    payload = MessageCreate(
-                        body=data.get("body", ""), 
-                        nonce=data.get("nonce"),
-                        attachments=data.get("attachments")  # Передаём вложения
-                    )
-                    msg = await create_message_with_nonce(
-                        db, room_id, user.id, payload, redis,
-                        attachments_data=payload.attachments  # И в сервис
-                    )
+                    payload = MessageCreate(body=data.get("body", ""), nonce=data.get("nonce"))
+                    msg = await create_message_with_nonce(db, room_id, user.id, payload, redis)
 
                     message_data = {
                         "type": "message",
@@ -158,18 +141,6 @@ async def global_websocket_endpoint(
                             "display_name": user.display_name,
                             "avatar_url": user.avatar_url,
                         },
-                        "attachments": [
-                            {
-                                "id": att.id,
-                                "message_id": att.message_id,
-                                "filename": att.filename,
-                                "file_path": att.file_path,
-                                "file_size": att.file_size,
-                                "mime_type": att.mime_type,
-                                "created_at": att.created_at.isoformat(),
-                            }
-                            for att in (msg.attachments or [])
-                        ],
                     }
 
                     if redis:

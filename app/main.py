@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.staticfiles import StaticFiles
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 
@@ -14,13 +13,12 @@ from app.api.http import router as http_router
 from app.api.ws import router as ws_router
 from app.api.auth import router as auth_router
 from app.api.admin import router as admin_router
-from contextlib import asynccontextmanager
-from app.api import auth, http, ws, rooms
+from app.api import auth, http, ws, rooms, attachments
 
-app = FastAPI()
-app.include_router(auth.router)
-
-app.add_middleware(CORSMiddleware, ...)
+ALLOWED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,13 +27,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     from app.infra.redis import close_redis
-    await close_redis()  # ← Добавь
+    await close_redis()
     await engine.dispose() # Close connection pool with SQLAlchemy
-
-ALLOWED_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
 
 app = FastAPI(
     title="Borofone Chat API",
@@ -53,18 +46,6 @@ app.add_middleware(
     expose_headers = ["Set-Cookie"],
 )
 
-# prod CORS
-# from fastapi.middleware.cors import CORSMiddleware
-#
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=[
-#         "https://your-domain.com"
-#     ],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-#
 @app.get("/")
 async def root():
     return RedirectResponse(url="main.html")
@@ -75,6 +56,7 @@ app.include_router(auth_router)  # /auth/*
 app.include_router(admin_router)  # /admin/invites/*
 
 app.include_router(rooms.router)
+app.include_router(attachments.router)
 
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.mount("/", StaticFiles(directory="pages", html=True), name="pages")
