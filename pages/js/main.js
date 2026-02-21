@@ -2,17 +2,18 @@
 // API CONFIGURATION
 // ==========================================
 
+// Используем config.js если есть, иначе fallback
+const API_URL = window.API_URL || resolveApiBase();
+const WS_URL = window.WS_URL || resolveWsBase(API_URL);
+
 function resolveApiBase() {
     const url = new URL(window.location.href);
-
     if (url.protocol === 'file:') {
         return 'http://localhost:8000';
     }
-
     if (url.port && url.port !== '8000') {
         return `${url.protocol}//${url.hostname}:8000`;
     }
-
     return url.origin;
 }
 
@@ -21,9 +22,6 @@ function resolveWsBase(apiBase) {
     const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${wsProtocol}//${apiUrl.host}`;
 }
-
-const API_URL = resolveApiBase();
-const WS_URL = resolveWsBase(API_URL);
 
 // ==========================================
 // STATE
