@@ -41,6 +41,27 @@ const ALL_EMOJI_OPTIONS = [
 ];
 let replyToMessage = null;
 let activeReactionPickerFor = null;
+
+let voiceRooms = [];
+let currentVoiceRoomId = null;
+let voiceParticipants = [];
+let localStream = null;
+let isMuted = false;
+let isDeafened = false;
+const peerConnections = new Map();
+const voiceRoomParticipantsByRoom = {};
+
+const voiceJoinSound = new Audio('./sounds/voice_join.wav');
+const voiceLeaveSound = new Audio('./sounds/voice_leave.wav');
+voiceJoinSound.preload = 'auto';
+voiceLeaveSound.preload = 'auto';
+
+const participantVolumes = JSON.parse(localStorage.getItem('participantVolumes') || "{}");
+let micGainValue = 1;
+let headphonesGainValue = 1;
+let micAudioContext = null;
+let micGainNode = null;
+let processedOutboundStream = null;
 // ==========================================
 // DOM ELEMENTS
 // ==========================================
@@ -57,6 +78,7 @@ const createRoomBtn = document.getElementById('createRoomBtn');
 const createRoomModal = document.getElementById('createRoomModal');
 const createRoomForm = document.getElementById('createRoomForm');
 const roomNameInput = document.getElementById('roomNameInput');
+const roomTypeInput = document.getElementById('roomTypeInput');
 const closeModalBtn = document.getElementById('closeModalBtn');
 const cancelModalBtn = document.getElementById('cancelModalBtn');
 const settingsBtn = document.getElementById('settingsBtn');
@@ -72,6 +94,19 @@ const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
 const currentUserAvatar = document.getElementById('currentUserAvatar');
 const currentUserName = document.getElementById('currentUserName');
 const currentUserUsername = document.getElementById('currentUserUsername');
+const voiceRoomsList = document.getElementById('voiceRoomsList');
+const createVoiceRoomBtn = document.getElementById('createVoiceRoomBtn');
+const toggleMicBtn = document.getElementById('toggleMicBtn');
+const toggleDeafenBtn = document.getElementById('toggleDeafenBtn');
+const leaveVoiceBtn = document.getElementById('leaveVoiceBtn');
+const voiceRoomState = document.getElementById('voiceRoomState');
+const voiceParticipantsGrid = document.getElementById('voiceParticipantsGrid');
+const voiceControls = document.getElementById('voiceControls');
+const localAudioControls = document.getElementById('localAudioControls');
+const micVolumeSlider = document.getElementById('micVolumeSlider');
+const headphoneVolumeSlider = document.getElementById('headphoneVolumeSlider');
+const micVolumeValue = document.getElementById('micVolumeValue');
+const headphoneVolumeValue = document.getElementById('headphoneVolumeValue');
 
 const replyPreview = document.createElement('div');
 replyPreview.className = 'reply-preview hidden';
@@ -92,6 +127,17 @@ document.body.appendChild(messageContextMenu);
 const messageContextEmojiMenu = document.createElement('div');
 messageContextEmojiMenu.className = 'message-context-emoji-menu hidden';
 document.body.appendChild(messageContextEmojiMenu);
+
+const roomContextMenu = document.createElement('div');
+roomContextMenu.className = 'room-context-menu hidden';
+roomContextMenu.innerHTML = '<button type="button" id="roomContextAction"></button>';
+document.body.appendChild(roomContextMenu);
+
+const participantVolumeMenu = document.createElement('div');
+participantVolumeMenu.className = 'participant-volume-menu hidden';
+participantVolumeMenu.innerHTML = '<div class="volume-context-header">Set volume</div><input type="range" class="volume-context-slider" id="participantVolumeSlider" min="0" max="100" step="1" value="100"><div class="volume-context-value" id="participantVolumeValue">100%</div>';
+
+document.body.appendChild(participantVolumeMenu);
 
 // ==========================================
 // AUTH FUNCTIONS
@@ -205,7 +251,7 @@ async function loadRooms() {
             roomEl.addEventListener('click', () => selectRoom(room.id));
             roomsList.appendChild(roomEl);
         });
-        
+
         // Обновляем badges ТОЛЬКО при первой загрузке (не при создании новой комнаты)
         if (!badgesInitialized) {
             badgesInitialized = true;
@@ -229,9 +275,30 @@ async function loadRooms() {
 
 async function createRoom() {
     const title = roomNameInput.value.trim();
+    const roomType = roomTypeInput?.value || 'text';
     if (!title) return;
 
     try {
+        if (roomType === 'voice') {
+            const response = await fetchWithAuth(`${getApiUrl()}/voice-rooms`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: title }),
+            });
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                alert(error.detail || 'Не удалось создать аудиокомнату');
+                return;
+            }
+            const room = await response.json();
+            roomNameInput.value = '';
+            closeModal();
+            await loadVoiceRooms();
+            await joinVoiceRoom(room.id);
+            startSpeakingDetector();
+            return;
+        }
+
         const response = await fetch(`${getApiUrl()}/rooms`, {
             method: 'POST',
             credentials: 'include',
@@ -284,7 +351,7 @@ function selectRoom(roomId) {
 
     // Load messages (WebSocket уже подключен глобально)
     loadMessages(roomId);
-    
+
     // Start presence tracking для новой комнаты
     stopPresenceTracking();  // останавливаем старую
     startPresenceTracking(); // запускаем новую
@@ -317,7 +384,7 @@ async function loadMessages(roomId) {
         } else {
             const lastRead = window.notifications ? window.notifications.getLastReadMessageId(roomId) : 0;
             let unreadDividerAdded = false;
-            
+
             messages.forEach(msg => {
                 // Добавляем разделитель перед первым непрочитанным сообщением
                 if (!unreadDividerAdded && lastRead > 0 && msg.id > lastRead) {
@@ -327,13 +394,13 @@ async function loadMessages(roomId) {
                     messagesList.appendChild(divider);
                     unreadDividerAdded = true;
                 }
-                
+
                 addMessage(msg, false);
             });
-            
+
             // Скроллим вниз после загрузки всех сообщений (с ожиданием изображений)
             scrollToBottomInitial();
-            
+
             // Отмечаем комнату как прочитанную
             if (window.notifications) {
                 window.notifications.markRoomAsRead(messages, roomId);
@@ -362,7 +429,7 @@ function addMessage(msg, animate = false) {
     messageEl.className = 'message' + (animate ? ' message-new' : '');
     messageEl.dataset.messageId = msg.id;
     messageEl.dataset.userId = msg.user?.id || 0;
-    
+
     // message-unread больше не нужен — оставляем только divider
 
     const author = msg.user?.display_name || msg.author || 'Unknown';
@@ -376,10 +443,10 @@ function addMessage(msg, animate = false) {
     });
 
     // Рендерим вложения если есть
-    const attachmentsHtml = window.attachments 
-        ? window.attachments.renderMessageAttachments(msg.attachments) 
+    const attachmentsHtml = window.attachments
+        ? window.attachments.renderMessageAttachments(msg.attachments)
         : '';
-    
+
     // Скрываем текст если пустой и есть вложения
     const isDeleted = Boolean(msg.is_deleted);
     messageEl.dataset.isDeleted = isDeleted ? '1' : '0';
@@ -387,7 +454,7 @@ function addMessage(msg, animate = false) {
     const bodyHtml = bodyText ? `<div class="message-text${isDeleted ? ' message-text--deleted' : ''}">${bodyText}</div>` : '';
 
     const reactionsHtml = renderReactions(msg.reactions || []);
-    
+
 
     messageEl.innerHTML = `
         <div class="message-avatar">
@@ -804,15 +871,15 @@ function scrollToBottom() {
 function scrollToBottomWithImages() {
     // Находим все изображения в контейнере, которые ещё не загрузились
     const images = messagesList.querySelectorAll('img:not([data-loaded])');
-    
+
     if (images.length === 0) {
         scrollToBottom();
         return;
     }
-    
+
     // Помечаем изображения как ожидающие загрузки
     let pendingCount = images.length;
-    
+
     images.forEach(img => {
         // Если изображение уже загружено (из кэша)
         if (img.complete) {
@@ -823,7 +890,7 @@ function scrollToBottomWithImages() {
             }
             return;
         }
-        
+
         // Ждём загрузки
         img.onload = () => {
             img.dataset.loaded = 'true';
@@ -832,7 +899,7 @@ function scrollToBottomWithImages() {
                 scrollToBottom();
             }
         };
-        
+
         img.onerror = () => {
             img.dataset.loaded = 'true';
             pendingCount--;
@@ -841,7 +908,7 @@ function scrollToBottomWithImages() {
             }
         };
     });
-    
+
     // Скроллим сразу на случай если изображения не загрузятся
     setTimeout(() => scrollToBottom(), 100);
 }
@@ -852,21 +919,21 @@ function scrollToBottomWithImages() {
  */
 function scrollToBottomInitial() {
     const images = messagesList.querySelectorAll('img:not([data-loaded])');
-    
+
     if (images.length === 0) {
         scrollToBottom();
         return;
     }
-    
+
     let pendingCount = images.length;
     let scrolled = false;
-    
+
     const doScroll = () => {
         if (scrolled) return;
         scrolled = true;
         scrollToBottom();
     };
-    
+
     images.forEach(img => {
         if (img.complete) {
             img.dataset.loaded = 'true';
@@ -876,7 +943,7 @@ function scrollToBottomInitial() {
             }
             return;
         }
-        
+
         img.onload = () => {
             img.dataset.loaded = 'true';
             pendingCount--;
@@ -884,7 +951,7 @@ function scrollToBottomInitial() {
                 doScroll();
             }
         };
-        
+
         img.onerror = () => {
             img.dataset.loaded = 'true';
             pendingCount--;
@@ -893,7 +960,7 @@ function scrollToBottomInitial() {
             }
         };
     });
-    
+
     // Fallback: скроллим через небольшую задержку
     setTimeout(() => doScroll(), 150);
 }
@@ -911,7 +978,7 @@ function escapeHtml(text) {
 async function sendMessage() {
     const text = messageInput.value.trim();
     const hasAttachments = window.attachments && window.attachments.getAttachmentsToSend().length > 0;
-    
+
     if (!text && !hasAttachments) return;
     if (!currentRoom) return;
 
@@ -946,12 +1013,12 @@ async function sendMessage() {
                 attachments: uploadedAttachments,
                 reply_to_id: replyToMessage?.id ?? null,
             }));
-            
+
             // Очищаем вложения после отправки
             if (window.attachments) {
                 window.attachments.clearAttachments();
             }
-            
+
             // Своё сообщение — сразу обновляем lastRead (оптимистично)
             // Когда придёт через WS с ID — обновим снова
             markCurrentRoomAsRead();
@@ -962,7 +1029,7 @@ async function sendMessage() {
             const response = await fetchWithAuth(`${getApiUrl()}/rooms/${currentRoom.id}/messages`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     body: text || '',  // Пустая строка допустима если есть вложения
                     nonce: nonce,
                     attachments: uploadedAttachments,
@@ -973,12 +1040,12 @@ async function sendMessage() {
             if (!response.ok) throw new Error('Failed to send message');
 
             const msg = await response.json();
-            
+
             // Очищаем вложения после отправки
             if (window.attachments) {
                 window.attachments.clearAttachments();
             }
-            
+
             // HTTP fallback — добавляем сразу сами, WS не пришлёт
             if (!messagesList.querySelector(`[data-message-id="${msg.id}"]`)) {
                 addMessage(msg, true);
@@ -993,6 +1060,17 @@ async function sendMessage() {
     }
 }
 
+function playVoiceEventSound(kind) {
+    const sound = kind === 'join' ? voiceJoinSound : voiceLeaveSound;
+    try {
+        sound.currentTime = 0;
+        const p = sound.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+    } catch (_) {
+        // autoplay policy / decode errors are non-fatal
+    }
+}
+
 // ==========================================
 // WEBSOCKET
 // ==========================================
@@ -1000,7 +1078,7 @@ async function sendMessage() {
 // Подключаемся к глобальному WS ОДИН РАЗ при загрузке
 function connectWebSocket() {
     if (ws) return; // уже подключены
-    
+
     wsReady = new Promise((resolve) => {
         const wsUrl = `${getWsUrl()}/ws`;
         const socket = new WebSocket(wsUrl);
@@ -1022,18 +1100,18 @@ function connectWebSocket() {
                         if (!messagesList.querySelector(`[data-message-id="${data.id}"]`)) {
                             addMessage(data, true);
                         }
-                        
+
                         // Если это НАШЕ сообщение — обновляем lastRead с правильным ID
                         if (data.user?.id === currentUser?.id && window.notifications) {
                             window.notifications.setLastReadMessageId(currentRoom.id, data.id);
                         }
                     }
-                    
+
                     // Уведомления ТОЛЬКО если сообщение НЕ от меня
                     if (window.notifications && data.user?.id !== currentUser?.id) {
                         // Звук
                         window.notifications.playNotificationSound();
-                        
+
                         // Badge
                         if (data.room_id) {
                             if (currentRoom && data.room_id === currentRoom.id) {
@@ -1048,11 +1126,65 @@ function connectWebSocket() {
                     closeReactionPicker();
                 } else if (data.type === 'message_deleted') {
                     applyDeletedMessage(data.message_id, data.body || 'Сообщение удалено');
+                } else if (data.type === 'room_joined') {
+                    peerConnections.forEach((_, uid) => closePeerConnection(uid));
+                    currentVoiceRoomId = data.room_id;
+                    voiceParticipants = data.participants || [];
+                    voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
+                    renderVoiceRooms();
+                    renderVoiceParticipantsGrid();
+                    ensurePeerConnections();
+                    playVoiceEventSound('join');
+                } else if (data.type === 'participant_joined') {
+                    if (data.room_id === currentVoiceRoomId) {
+                        voiceParticipants = upsertVoiceParticipant(data.participant);
+                        voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
+                        renderVoiceParticipantsGrid();
+                        ensurePeerConnections();
+                        if (data.participant?.user_id !== currentUser?.id) playVoiceEventSound('join');
+                    }
+                } else if (data.type === 'participant_left') {
+                    if (data.room_id === currentVoiceRoomId) {
+                        const leftUserId = data.participant?.user_id;
+                        voiceParticipants = voiceParticipants.filter(p => p.user_id !== leftUserId);
+                        voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
+                        closePeerConnection(leftUserId);
+                        renderVoiceParticipantsGrid();
+                        if (leftUserId && leftUserId !== currentUser?.id) playVoiceEventSound('leave');
+                    }
+                } else if (data.type === 'participant_updated') {
+                    if (data.room_id === currentVoiceRoomId) {
+                        voiceParticipants = upsertVoiceParticipant(data.participant);
+                        voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
+                        renderVoiceParticipantsGrid();
+                    }
+                } else if (data.type === 'speaking') {
+                    if (data.room_id === currentVoiceRoomId) {
+                        const participant = voiceParticipants.find(p => p.user_id === data.user_id);
+                        if (participant) participant.speaking = data.speaking;
+                        renderVoiceParticipantsGrid();
+                    }
+                } else if (data.type === 'rtc_offer') {
+                    handleRtcOffer(data);
+                } else if (data.type === 'rtc_answer') {
+                    handleRtcAnswer(data);
+                } else if (data.type === 'rtc_ice') {
+                    handleRtcIce(data);
+                } else if (data.type === 'voice_room_presence') {
+                    voiceRoomParticipantsByRoom[data.room_id] = data.participants || [];
+                    if (data.room_id === currentVoiceRoomId) {
+                        voiceParticipants = data.participants || [];
+                        renderVoiceParticipantsGrid();
+                    }
+                    renderVoiceRooms();
                 } else if (data.type === 'error') {
                     console.error('[WS] error:', data.detail);
                     if (data.code === 'unauthorized') redirectToLogin();
                 } else if (data.type === 'connected') {
                     console.log('[WS] ready');
+                    if (currentVoiceRoomId) {
+                        joinVoiceRoom(currentVoiceRoomId);
+                    }
                 }
             } catch (err) {
                 console.error('[WS] parse error:', err);
@@ -1068,7 +1200,7 @@ function connectWebSocket() {
             console.log('[WS] disconnected');
             updateConnectionStatus('disconnected');
             ws = null;
-            
+
             // Переподключаемся через 3 секунды
             setTimeout(() => connectWebSocket(), 3000);
         };
@@ -1092,14 +1224,16 @@ function updateConnectionStatus(status) {
 // MODAL
 // ==========================================
 
-function openModal() {
+function openModal(type = 'text') {
     createRoomModal.classList.add('active');
+    if (roomTypeInput) roomTypeInput.value = type;
     roomNameInput.focus();
 }
 
 function closeModal() {
     createRoomModal.classList.remove('active');
     roomNameInput.value = '';
+    if (roomTypeInput) roomTypeInput.value = 'text';
 }
 
 function renderCurrentUser() {
@@ -1325,7 +1459,95 @@ replyPreview.querySelector('.reply-preview-close').addEventListener('click', () 
     clearReplyTarget();
 });
 
-createRoomBtn.addEventListener('click', openModal);
+
+roomsList.addEventListener('contextmenu', async (event) => {
+    const item = event.target.closest('.room-item');
+    if (!item) return;
+    event.preventDefault();
+    const roomId = Number(item.dataset.roomId);
+    openRoomContextMenu({ x: event.clientX, y: event.clientY, roomId, type: 'text' });
+});
+
+voiceRoomsList.addEventListener('contextmenu', async (event) => {
+    const item = event.target.closest('[data-voice-room-id]');
+    if (!item) return;
+    event.preventDefault();
+    const roomId = Number(item.dataset.voiceRoomId);
+    openRoomContextMenu({ x: event.clientX, y: event.clientY, roomId, type: 'voice' });
+});
+
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.room-context-menu')) {
+        roomContextMenu.classList.add('hidden');
+    }
+});
+
+
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.participant-volume-menu')) {
+        participantVolumeMenu.classList.add('hidden');
+    }
+});
+
+micVolumeSlider?.addEventListener('input', () => {
+    micGainValue = Number(micVolumeSlider.value) / 100;
+    if (micGainNode) micGainNode.gain.value = micGainValue;
+    if (micVolumeValue) micVolumeValue.textContent = `${micVolumeSlider.value}%`;
+});
+
+headphoneVolumeSlider?.addEventListener('input', () => {
+    headphonesGainValue = Number(headphoneVolumeSlider.value) / 100;
+    if (headphoneVolumeValue) headphoneVolumeValue.textContent = `${headphoneVolumeSlider.value}%`;
+    applyHeadphonesGain();
+});
+
+function openRoomContextMenu({ x, y, roomId, type }) {
+    const actionBtn = roomContextMenu.querySelector('#roomContextAction');
+    roomContextMenu.style.left = `${x}px`;
+    roomContextMenu.style.top = `${y}px`;
+
+    if (currentUser?.role !== 'admin') {
+        actionBtn.textContent = 'Не хватает прав';
+        actionBtn.disabled = true;
+        actionBtn.classList.add('insufficient-rights');
+        actionBtn.onclick = null;
+    } else {
+        actionBtn.textContent = type === 'voice' ? 'Удалить аудиокомнату' : 'Удалить комнату';
+        actionBtn.disabled = false;
+        actionBtn.classList.remove('insufficient-rights');
+        actionBtn.onclick = async () => {
+            await deleteRoomByType(roomId, type);
+            roomContextMenu.classList.add('hidden');
+        };
+    }
+
+    roomContextMenu.classList.remove('hidden');
+}
+
+async function deleteRoomByType(roomId, type) {
+    const endpoint = type === 'voice' ? `${getApiUrl()}/voice-rooms/${roomId}` : `${getApiUrl()}/rooms/${roomId}`;
+    const response = await fetchWithAuth(endpoint, { method: 'DELETE' });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        alert(error.detail || 'Не удалось удалить комнату');
+        return;
+    }
+    if (type === 'voice') {
+        if (currentVoiceRoomId === roomId) leaveVoiceRoom();
+        await loadVoiceRooms();
+    } else {
+        if (currentRoom?.id === roomId) {
+            currentRoom = null;
+            roomName.textContent = 'Выберите комнату';
+            messagesList.innerHTML = '<div class="placeholder-message"><span class="placeholder-icon">💬</span><p>Выберите комнату, чтобы начать общение</p></div>';
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+        }
+        await loadRooms();
+    }
+}
+
+if (createRoomBtn) createRoomBtn.addEventListener('click', () => openModal('text'));
 closeModalBtn.addEventListener('click', closeModal);
 cancelModalBtn.addEventListener('click', closeModal);
 
@@ -1397,22 +1619,22 @@ async function loadOnlineUsers() {
         `;
         return;
     }
-    
+
     try {
         const response = await fetchWithAuth(`${getApiUrl()}/rooms/${currentRoom.id}/online`);
-        
+
         if (!response.ok) {
             throw new Error('Failed to load online users');
         }
-        
+
         const users = await response.json();
-        
+
         // Обновляем счётчик
         document.getElementById('usersCount').textContent = users.length;
-        
+
         // Отображаем список
         const usersList = document.getElementById('usersList');
-        
+
         if (users.length === 0) {
             usersList.innerHTML = `
                 <div class="placeholder-message">
@@ -1422,16 +1644,16 @@ async function loadOnlineUsers() {
             `;
             return;
         }
-        
+
         usersList.innerHTML = users.map(user => {
             const displayName = user.display_name || user.username;
             const avatarUrl = normalizeAvatarUrl(user.avatar_url);
             const initial = displayName[0]?.toUpperCase() || 'U';
-            
+
             const avatarHtml = avatarUrl
                 ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(displayName)}" class="avatar-media">`
                 : `<span>${initial}</span>`;
-            
+
             return `
                 <div class="user-item">
                     <div class="user-avatar">${avatarHtml}</div>
@@ -1453,7 +1675,7 @@ async function loadOnlineUsers() {
  */
 async function sendPresenceHeartbeat() {
     if (!currentRoom || !ws || ws.readyState !== WebSocket.OPEN) return;
-    
+
     try {
         ws.send(JSON.stringify({
             type: 'heartbeat',
@@ -1469,10 +1691,10 @@ async function sendPresenceHeartbeat() {
  */
 function startPresenceTracking() {
     if (presenceInterval) return;
-    
+
     // Загружаем онлайн пользователей сразу
     loadOnlineUsers();
-    
+
     // Обновляем каждые 10 секунд
     presenceInterval = setInterval(() => {
         loadOnlineUsers();
@@ -1510,10 +1732,10 @@ function updateRoomBadge(roomId, count) {
 function incrementRoomBadge(roomId) {
     const roomEl = roomsList.querySelector(`[data-room-id="${roomId}"]`);
     if (!roomEl) return;
-    
+
     const badge = roomEl.querySelector('.unread-badge');
     const current = badge ? parseInt(badge.textContent) || 0 : 0;
-    
+
     if (window.notifications) {
         window.notifications.updateRoomBadge(roomEl, current + 1);
     }
@@ -1524,11 +1746,11 @@ function incrementRoomBadge(roomId) {
  */
 function markCurrentRoomAsRead() {
     if (!currentRoom || !window.notifications) return;
-    
+
     // Берём все сообщения из DOM
     const messages = Array.from(messagesList.querySelectorAll('[data-message-id]'))
         .map(el => ({ id: parseInt(el.dataset.messageId) }));
-    
+
     if (messages.length > 0) {
         window.notifications.markRoomAsRead(messages, currentRoom.id);
         updateRoomBadge(currentRoom.id, 0);
@@ -1540,11 +1762,11 @@ function markCurrentRoomAsRead() {
  */
 function updateCurrentRoomBadge() {
     if (!currentRoom) return;
-    
+
     // Получаем все сообщения из DOM
     const messages = Array.from(messagesList.querySelectorAll('[data-message-id]'))
         .map(el => ({ id: parseInt(el.dataset.messageId) }));
-    
+
     if (window.notifications) {
         const unread = window.notifications.countUnreadMessages(messages, currentRoom.id);
         updateRoomBadge(currentRoom.id, unread);
@@ -1556,13 +1778,13 @@ function updateCurrentRoomBadge() {
  */
 async function updateAllRoomBadges() {
     if (!window.notifications) return;
-    
+
     for (const room of rooms) {
         try {
             // Загружаем сообщения комнаты (без отображения)
             const response = await fetchWithAuth(`${getApiUrl()}/rooms/${room.id}/messages`);
             if (!response.ok) continue;
-            
+
             const messages = await response.json();
             const unread = window.notifications.countUnreadMessages(messages, room.id);
             updateRoomBadge(room.id, unread);
@@ -1583,50 +1805,50 @@ const previousUnreadCounts = {};
 
 /**
  * Периодическая проверка новых сообщений во всех комнатах.
- * 
+ *
  * Запускается после загрузки комнат и работает в фоне.
  * Проверяет каждые 10 секунд: есть ли новые сообщения.
  */
 async function startPolling() {
     if (pollingInterval) return;
-    
+
     pollingInterval = setInterval(async () => {
         if (!window.notifications || !rooms.length) return;
-        
+
         for (const room of rooms) {
             // Пропускаем текущую комнату — там WebSocket работает
             if (currentRoom && room.id === currentRoom.id) continue;
-            
+
             try {
                 const response = await fetch(`${getApiUrl()}/rooms/${room.id}/messages`, {
                     credentials: 'include',
                 });
-                
+
                 if (!response.ok) continue;
-                
+
                 const messages = await response.json();
                 if (messages.length === 0) continue;
-                
+
                 const lastRead = window.notifications.getLastReadMessageId(room.id);
                 const unreadCount = messages.filter(m => m.id > lastRead).length;
-                
+
                 const prevCount = previousUnreadCounts[room.id] || 0;
-                
+
                 // Обновляем badge
                 if (unreadCount > 0) {
                     updateRoomBadge(room.id, unreadCount);
                 }
-                
+
                 // Звук только если count УВЕЛИЧИЛСЯ (новое сообщение пришло)
                 if (unreadCount > prevCount) {
                     const lastMessage = messages[messages.length - 1];
-                    
+
                     // Звук только если сообщение не от нас
                     if (lastMessage.user?.id !== currentUser?.id) {
                         window.notifications.playNotificationSound();
                     }
                 }
-                
+
                 previousUnreadCounts[room.id] = unreadCount;
             } catch (err) {
                 // Тихо игнорируем ошибки polling
@@ -1643,13 +1865,341 @@ function stopPolling() {
 }
 
 // ==========================================
+// VOICE CHAT (MVP)
+// ==========================================
+
+function upsertVoiceParticipant(participant) {
+    const copy = [...voiceParticipants];
+    const idx = copy.findIndex(p => p.user_id === participant.user_id);
+    if (idx >= 0) copy[idx] = { ...copy[idx], ...participant };
+    else copy.push(participant);
+    return copy;
+}
+
+async function loadVoiceRooms() {
+    const response = await fetchWithAuth(`${getApiUrl()}/voice-rooms`);
+    if (!response.ok) return;
+    voiceRooms = await response.json();
+
+    await Promise.all(voiceRooms.map(async (room) => {
+        try {
+            const participantsRes = await fetchWithAuth(`${getApiUrl()}/voice-rooms/${room.id}/participants`);
+            if (!participantsRes.ok) return;
+            voiceRoomParticipantsByRoom[room.id] = await participantsRes.json();
+        } catch (_) {
+            voiceRoomParticipantsByRoom[room.id] = [];
+        }
+    }));
+
+    renderVoiceRooms();
+}
+
+function renderVoiceRooms() {
+    if (!voiceRoomsList) return;
+    voiceRoomsList.innerHTML = voiceRooms.map(room => {
+        const participants = voiceRoomParticipantsByRoom[room.id] || [];
+        const icons = participants.slice(0, 4).map(p => `<span class="voice-room-user-icon ${p.speaking ? 'speaking' : ''}" title="${escapeHtml(p.display_name || p.username)}">${escapeHtml((p.display_name || p.username || '?')[0]?.toUpperCase() || '?')}</span>`).join('');
+        const more = participants.length > 4 ? `<span class="voice-room-user-more">+${participants.length - 4}</span>` : '';
+        return `<div class="voice-room-item ${room.id === currentVoiceRoomId ? 'active' : ''}" data-voice-room-id="${room.id}"><span class="voice-room-item-title">🔊 ${escapeHtml(room.name)}</span><span class="voice-room-users">${icons}${more}</span></div>`;
+    }).join('');
+    voiceRoomState.textContent = currentVoiceRoomId ? `В комнате: ${escapeHtml((voiceRooms.find(r => r.id === currentVoiceRoomId) || {}).name || '')}` : 'Не в голосовой комнате';
+    toggleMicBtn.disabled = !currentVoiceRoomId;
+    toggleDeafenBtn.disabled = !currentVoiceRoomId;
+    leaveVoiceBtn.disabled = !currentVoiceRoomId;
+    const controlsVisible = !!currentVoiceRoomId;
+    if (voiceControls) voiceControls.style.display = controlsVisible ? "flex" : "none";
+    if (localAudioControls) localAudioControls.style.display = controlsVisible ? "grid" : "none";
+}
+
+function renderVoiceParticipantsGrid() {
+    if (!voiceParticipantsGrid) return;
+
+    voiceParticipantsGrid.innerHTML = voiceParticipants.map(participant => {
+        const displayName = escapeHtml(participant.display_name || participant.username);
+        const username = escapeHtml(participant.username);
+        const initials = displayName[0]?.toUpperCase() || username[0]?.toUpperCase() || 'U';
+
+        let statusClass = 'mic-on';
+        let statusIcon = '🎤';
+        if (participant.deafened) {
+            statusClass = 'deafened';
+            statusIcon = '🔇';
+        } else if (participant.muted) {
+            statusClass = 'mic-off';
+            statusIcon = '🎤';
+        }
+
+        const cardClasses = [
+            'voice-participant-card',
+            participant.speaking ? 'speaking' : '',
+            participant.muted ? 'muted' : ''
+        ].filter(Boolean).join(' ');
+
+        const volumePct = Math.round((participantVolumes[participant.user_id] ?? 1) * 100);
+
+        return `
+            <div class="${cardClasses}" data-user-id="${participant.user_id}" data-username="${username}">
+                <div class="voice-participant-avatar">
+                    <span>${initials}</span>
+                    <div class="voice-participant-status ${statusClass}">${statusIcon}</div>
+                </div>
+                <div class="voice-participant-name" title="${displayName}">${displayName}</div>
+                <div class="voice-participant-volume">
+                    <div class="voice-participant-volume-fill" style="width: ${volumePct}%"></div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    voiceParticipantsGrid.querySelectorAll('.voice-participant-card').forEach(card => {
+        card.addEventListener('contextmenu', handleParticipantContextMenu);
+    });
+}
+
+function handleParticipantContextMenu(event) {
+    event.preventDefault();
+    const card = event.currentTarget;
+    const userId = parseInt(card.dataset.userId);
+    const username = card.dataset.username;
+    if (!userId || userId === currentUser?.id) return;
+
+    const header = participantVolumeMenu.querySelector('.volume-context-header');
+    const slider = participantVolumeMenu.querySelector('.volume-context-slider');
+    const value = participantVolumeMenu.querySelector('.volume-context-value');
+
+    const currentVolume = participantVolumes[userId] ?? 1;
+    header.textContent = `Set ${username} volume`;
+    slider.value = String(Math.round(currentVolume * 100));
+    value.textContent = `${slider.value}%`;
+
+    participantVolumeMenu.style.left = `${event.clientX}px`;
+    participantVolumeMenu.style.top = `${event.clientY}px`;
+    participantVolumeMenu.classList.remove('hidden');
+
+    slider.oninput = () => {
+        const volPct = Number(slider.value);
+        value.textContent = `${volPct}%`;
+        setParticipantVolume(userId, volPct / 100);
+        renderVoiceParticipantsGrid();
+    };
+}
+
+async function ensureLocalStream() {
+    if (localStream) return localStream;
+    localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 1,
+            sampleRate: 48000,
+            sampleSize: 16,
+            latency: 0.01,
+        },
+        video: false,
+    });
+
+    micAudioContext = new AudioContext();
+    const source = micAudioContext.createMediaStreamSource(localStream);
+    micGainNode = micAudioContext.createGain();
+    micGainNode.gain.value = micGainValue;
+    const destination = micAudioContext.createMediaStreamDestination();
+    source.connect(micGainNode).connect(destination);
+    processedOutboundStream = destination.stream;
+
+    return localStream;
+}
+
+async function joinVoiceRoom(roomId) {
+    await wsReady;
+    await ensureLocalStream();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    if (currentVoiceRoomId && currentVoiceRoomId !== roomId) {
+        peerConnections.forEach((_, uid) => closePeerConnection(uid));
+        ws.send(JSON.stringify({ type: 'leave_room', room_id: currentVoiceRoomId }));
+    }
+
+    ws.send(JSON.stringify({ type: 'join_room', room_id: roomId }));
+}
+
+function leaveVoiceRoom() {
+    if (currentVoiceRoomId && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'leave_room', room_id: currentVoiceRoomId }));
+    }
+    playVoiceEventSound('leave');
+    peerConnections.forEach((_, uid) => closePeerConnection(uid));
+    const leftRoomId = currentVoiceRoomId;
+    currentVoiceRoomId = null;
+    voiceParticipants = [];
+    if (leftRoomId) voiceRoomParticipantsByRoom[leftRoomId] = [];
+    if (speakingInterval) {
+        clearInterval(speakingInterval);
+        speakingInterval = null;
+    }
+    renderVoiceRooms();
+    renderVoiceParticipantsGrid();
+}
+
+function createPeerConnection(targetUserId) {
+    const pc = new RTCPeerConnection({
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+        iceCandidatePoolSize: 10,
+        iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+    });
+    (processedOutboundStream || localStream).getTracks().forEach(track => {
+        const sender = pc.addTrack(track, (processedOutboundStream || localStream));
+        const params = sender.getParameters();
+        if (!params.encodings) params.encodings = [{}];
+        params.encodings[0].maxBitrate = 64000;
+        params.encodings[0].priority = "high";
+        sender.setParameters(params).catch(() => {});
+    });
+    pc.onicecandidate = (event) => {
+        if (event.candidate && ws && currentVoiceRoomId) {
+            ws.send(JSON.stringify({ type: 'rtc_ice', room_id: currentVoiceRoomId, target_user_id: targetUserId, payload: event.candidate }));
+        }
+    };
+    pc.ontrack = (event) => {
+        const audio = document.getElementById(`remote-audio-${targetUserId}`) || document.createElement('audio');
+        audio.id = `remote-audio-${targetUserId}`;
+        audio.autoplay = true;
+        audio.srcObject = event.streams[0];
+        const participantVolume = participantVolumes[targetUserId] ?? 1;
+        audio.volume = Math.max(0, Math.min(2, participantVolume * headphonesGainValue));
+        audio.muted = isDeafened;
+        document.body.appendChild(audio);
+    };
+    peerConnections.set(targetUserId, pc);
+    return pc;
+}
+
+function closePeerConnection(userId) {
+    const pc = peerConnections.get(userId);
+    if (pc) pc.close();
+    peerConnections.delete(userId);
+    const audio = document.getElementById(`remote-audio-${userId}`);
+    if (audio) audio.remove();
+}
+
+async function ensurePeerConnections() {
+    if (!currentVoiceRoomId || !localStream) return;
+    const others = voiceParticipants.filter(p => p.user_id !== currentUser.id);
+    for (const p of others) {
+        if (peerConnections.has(p.user_id)) continue;
+        const pc = createPeerConnection(p.user_id);
+        if (currentUser.id < p.user_id) {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            ws.send(JSON.stringify({ type: 'rtc_offer', room_id: currentVoiceRoomId, target_user_id: p.user_id, payload: offer }));
+        }
+    }
+}
+
+async function handleRtcOffer(data) {
+    await ensureLocalStream();
+    let pc = peerConnections.get(data.from_user_id);
+    if (!pc) pc = createPeerConnection(data.from_user_id);
+    await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    ws.send(JSON.stringify({ type: 'rtc_answer', room_id: data.room_id, target_user_id: data.from_user_id, payload: answer }));
+}
+
+async function handleRtcAnswer(data) {
+    const pc = peerConnections.get(data.from_user_id);
+    if (!pc) return;
+    await pc.setRemoteDescription(new RTCSessionDescription(data.payload));
+}
+
+async function handleRtcIce(data) {
+    const pc = peerConnections.get(data.from_user_id);
+    if (!pc) return;
+    await pc.addIceCandidate(new RTCIceCandidate(data.payload));
+}
+
+function setMute(nextMuted) {
+    isMuted = nextMuted;
+    const me = voiceParticipants.find(p => p.user_id === currentUser?.id);
+    if (me) { me.muted = isMuted; me.speaking = false; renderVoiceParticipantsGrid(); renderVoiceRooms(); }
+    if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = !nextMuted; });
+    if (ws && currentVoiceRoomId) ws.send(JSON.stringify({ type: 'set_mute', room_id: currentVoiceRoomId, muted: isMuted }));
+    toggleMicBtn.textContent = isMuted ? '🎤 Unmute' : '🎤 Mic';
+}
+
+function setDeafen(nextDeafened) {
+    isDeafened = nextDeafened;
+    const me = voiceParticipants.find(p => p.user_id === currentUser?.id);
+    if (me) { me.deafened = isDeafened; renderVoiceParticipantsGrid(); renderVoiceRooms(); }
+    document.querySelectorAll('[id^="remote-audio-"]').forEach(audio => { audio.muted = isDeafened; });
+    if (ws && currentVoiceRoomId) ws.send(JSON.stringify({ type: 'set_deafen', room_id: currentVoiceRoomId, deafened: isDeafened }));
+    toggleDeafenBtn.textContent = isDeafened ? '🔈 Undeafen' : '🔇 Deafen';
+}
+
+function applyHeadphonesGain() {
+    document.querySelectorAll('[id^="remote-audio-"]').forEach((audioEl) => {
+        const userId = Number((audioEl.id || '').replace('remote-audio-', ''));
+        const participantVolume = participantVolumes[userId] ?? 1;
+        audioEl.volume = Math.max(0, Math.min(2, participantVolume * headphonesGainValue));
+    });
+}
+
+function setParticipantVolume(userId, value) {
+    participantVolumes[userId] = value;
+    localStorage.setItem('participantVolumes', JSON.stringify(participantVolumes));
+    applyHeadphonesGain();
+}
+
+let speakingInterval = null;
+let lastSpeakingState = false;
+function startSpeakingDetector() {
+    if (speakingInterval || !localStream) return;
+    const ctx = new AudioContext();
+    const analyser = ctx.createAnalyser();
+    const source = ctx.createMediaStreamSource(localStream);
+    source.connect(analyser);
+    const data = new Uint8Array(analyser.fftSize);
+    speakingInterval = setInterval(() => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += Math.abs(data[i] - 128);
+        const speaking = !isMuted && (sum / data.length > 4);
+        if (speaking === lastSpeakingState) return;
+        lastSpeakingState = speaking;
+        if (ws && currentVoiceRoomId) ws.send(JSON.stringify({ type: 'speaking', room_id: currentVoiceRoomId, speaking }));
+    }, 250);
+}
+
+
+voiceRoomsList.addEventListener('click', async (event) => {
+    const item = event.target.closest('[data-voice-room-id]');
+    if (!item) return;
+    await joinVoiceRoom(Number(item.dataset.voiceRoomId));
+    startSpeakingDetector();
+});
+
+createVoiceRoomBtn.addEventListener('click', () => openModal('voice'));
+
+toggleMicBtn.addEventListener('click', () => setMute(!isMuted));
+toggleDeafenBtn.addEventListener('click', () => setDeafen(!isDeafened));
+leaveVoiceBtn.addEventListener('click', () => leaveVoiceRoom());
+
+
+if (micVolumeSlider) micVolumeSlider.value = String(Math.round(micGainValue * 100));
+if (headphoneVolumeSlider) headphoneVolumeSlider.value = String(Math.round(headphonesGainValue * 100));
+if (micVolumeValue) micVolumeValue.textContent = `${Math.round(micGainValue * 100)}%`;
+if (headphoneVolumeValue) headphoneVolumeValue.textContent = `${Math.round(headphonesGainValue * 100)}%`;
+
+// ==========================================
 // INITIALIZATION
 // ==========================================
 
 async function init() {
     await loadCurrentUser();
     await loadRooms();
-    
+    await loadVoiceRooms();
+
     // Подключаемся к глобальному WebSocket ОДИН РАЗ
     connectWebSocket();
 }
