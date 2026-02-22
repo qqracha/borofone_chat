@@ -50,6 +50,12 @@ let isMuted = false;
 let isDeafened = false;
 const peerConnections = new Map();
 const voiceRoomParticipantsByRoom = {};
+const participantVolumes = JSON.parse(localStorage.getItem('participantVolumes') || "{}");
+let micGainValue = 1;
+let headphonesGainValue = 1;
+let micAudioContext = null;
+let micGainNode = null;
+let processedOutboundStream = null;
 // ==========================================
 // DOM ELEMENTS
 // ==========================================
@@ -89,6 +95,10 @@ const toggleDeafenBtn = document.getElementById('toggleDeafenBtn');
 const leaveVoiceBtn = document.getElementById('leaveVoiceBtn');
 const voiceRoomState = document.getElementById('voiceRoomState');
 const voiceParticipantsEl = document.getElementById('voiceParticipants');
+const voiceControls = document.getElementById('voiceControls');
+const voiceAudioSliders = document.getElementById('voiceAudioSliders');
+const micVolumeSlider = document.getElementById('micVolumeSlider');
+const headphonesVolumeSlider = document.getElementById('headphonesVolumeSlider');
 
 const replyPreview = document.createElement('div');
 replyPreview.className = 'reply-preview hidden';
@@ -114,6 +124,12 @@ const roomContextMenu = document.createElement('div');
 roomContextMenu.className = 'room-context-menu hidden';
 roomContextMenu.innerHTML = '<button type="button" id="roomContextAction"></button>';
 document.body.appendChild(roomContextMenu);
+
+const participantVolumeMenu = document.createElement('div');
+participantVolumeMenu.className = 'participant-volume-menu hidden';
+participantVolumeMenu.innerHTML = '<label>Громкость участника<input type="range" id="participantVolumeSlider" min="0" max="2" step="0.01" value="1"></label>';
+
+document.body.appendChild(participantVolumeMenu);
 
 // ==========================================
 // AUTH FUNCTIONS
@@ -1442,6 +1458,38 @@ document.addEventListener('click', (event) => {
     }
 });
 
+
+voiceParticipantsEl.addEventListener('contextmenu', (event) => {
+    const card = event.target.closest('[data-participant-user-id]');
+    if (!card) return;
+    event.preventDefault();
+    const targetUserId = Number(card.dataset.participantUserId);
+    if (!targetUserId || targetUserId === currentUser?.id) return;
+
+    participantVolumeMenu.style.left = `${event.clientX}px`;
+    participantVolumeMenu.style.top = `${event.clientY}px`;
+    const slider = participantVolumeMenu.querySelector('#participantVolumeSlider');
+    slider.value = String(participantVolumes[targetUserId] ?? 1);
+    slider.oninput = () => setParticipantVolume(targetUserId, Number(slider.value));
+    participantVolumeMenu.classList.remove('hidden');
+});
+
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.participant-volume-menu')) {
+        participantVolumeMenu.classList.add('hidden');
+    }
+});
+
+micVolumeSlider?.addEventListener('input', () => {
+    micGainValue = Number(micVolumeSlider.value);
+    if (micGainNode) micGainNode.gain.value = micGainValue;
+});
+
+headphonesVolumeSlider?.addEventListener('input', () => {
+    headphonesGainValue = Number(headphonesVolumeSlider.value);
+    applyHeadphonesGain();
+});
+
 function openRoomContextMenu({ x, y, roomId, type }) {
     const actionBtn = roomContextMenu.querySelector('#roomContextAction');
     roomContextMenu.style.left = `${x}px`;
@@ -1848,14 +1896,18 @@ function renderVoiceRooms() {
     toggleDeafenBtn.disabled = !currentVoiceRoomId;
     leaveVoiceBtn.disabled = !currentVoiceRoomId;
     const controlsVisible = !!currentVoiceRoomId;
-    if (toggleMicBtn?.parentElement) {
-        toggleMicBtn.parentElement.style.display = controlsVisible ? "flex" : "none";
-    }
+    if (voiceControls) voiceControls.style.display = controlsVisible ? "flex" : "none";
+    if (voiceAudioSliders) voiceAudioSliders.style.display = controlsVisible ? "grid" : "none";
 }
 
 function renderVoiceParticipants() {
     if (!voiceParticipantsEl) return;
-    voiceParticipantsEl.innerHTML = voiceParticipants.map(p => `<div class="voice-participant ${p.speaking ? 'speaking' : ''}">${escapeHtml(p.display_name || p.username)} ${p.muted ? '🎤off' : '🎤on'} ${p.deafened ? '🔇' : ''}</div>`).join('');
+    voiceParticipantsEl.innerHTML = voiceParticipants.map((p) => {
+        const name = escapeHtml(p.display_name || p.username);
+        const mutedChip = `<span class="voice-status-chip ${p.muted ? 'off' : ''}">${p.muted ? '🎤 Off' : '🎤 On'}</span>`;
+        const deafChip = p.deafened ? '<span class="voice-status-chip off">🔇 Deaf</span>' : '';
+        return `<div class="voice-user-card ${p.speaking ? 'speaking' : ''}" data-participant-user-id="${p.user_id}"><div class="voice-user-top"><div class="voice-user-name">${name}</div><div class="voice-user-badges">${mutedChip}${deafChip}</div></div></div>`;
+    }).join('');
 }
 
 async function ensureLocalStream() {
@@ -1872,6 +1924,15 @@ async function ensureLocalStream() {
         },
         video: false,
     });
+
+    micAudioContext = new AudioContext();
+    const source = micAudioContext.createMediaStreamSource(localStream);
+    micGainNode = micAudioContext.createGain();
+    micGainNode.gain.value = micGainValue;
+    const destination = micAudioContext.createMediaStreamDestination();
+    source.connect(micGainNode).connect(destination);
+    processedOutboundStream = destination.stream;
+
     return localStream;
 }
 
@@ -1906,7 +1967,7 @@ function createPeerConnection(targetUserId) {
         iceCandidatePoolSize: 10,
         iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
     });
-    localStream.getTracks().forEach(track => {
+    (processedOutboundStream || localStream).getTracks().forEach(track => {
         const sender = pc.addTrack(track, localStream);
         const params = sender.getParameters();
         if (!params.encodings) params.encodings = [{}];
@@ -1924,6 +1985,8 @@ function createPeerConnection(targetUserId) {
         audio.id = `remote-audio-${targetUserId}`;
         audio.autoplay = true;
         audio.srcObject = event.streams[0];
+        const participantVolume = participantVolumes[targetUserId] ?? 1;
+        audio.volume = Math.max(0, Math.min(2, participantVolume * headphonesGainValue));
         audio.muted = isDeafened;
         document.body.appendChild(audio);
     };
@@ -1977,6 +2040,8 @@ async function handleRtcIce(data) {
 
 function setMute(nextMuted) {
     isMuted = nextMuted;
+    const me = voiceParticipants.find(p => p.user_id === currentUser?.id);
+    if (me) { me.muted = isMuted; me.speaking = false; renderVoiceParticipants(); renderVoiceRooms(); }
     if (localStream) localStream.getAudioTracks().forEach(t => { t.enabled = !nextMuted; });
     if (ws && currentVoiceRoomId) ws.send(JSON.stringify({ type: 'set_mute', room_id: currentVoiceRoomId, muted: isMuted }));
     toggleMicBtn.textContent = isMuted ? '🎤 Unmute' : '🎤 Mic';
@@ -1984,9 +2049,25 @@ function setMute(nextMuted) {
 
 function setDeafen(nextDeafened) {
     isDeafened = nextDeafened;
+    const me = voiceParticipants.find(p => p.user_id === currentUser?.id);
+    if (me) { me.deafened = isDeafened; renderVoiceParticipants(); renderVoiceRooms(); }
     document.querySelectorAll('[id^="remote-audio-"]').forEach(audio => { audio.muted = isDeafened; });
     if (ws && currentVoiceRoomId) ws.send(JSON.stringify({ type: 'set_deafen', room_id: currentVoiceRoomId, deafened: isDeafened }));
     toggleDeafenBtn.textContent = isDeafened ? '🔈 Undeafen' : '🔇 Deafen';
+}
+
+function applyHeadphonesGain() {
+    document.querySelectorAll('[id^="remote-audio-"]').forEach((audioEl) => {
+        const userId = Number((audioEl.id || '').replace('remote-audio-', ''));
+        const participantVolume = participantVolumes[userId] ?? 1;
+        audioEl.volume = Math.max(0, Math.min(2, participantVolume * headphonesGainValue));
+    });
+}
+
+function setParticipantVolume(userId, value) {
+    participantVolumes[userId] = value;
+    localStorage.setItem('participantVolumes', JSON.stringify(participantVolumes));
+    applyHeadphonesGain();
 }
 
 let speakingInterval = null;
