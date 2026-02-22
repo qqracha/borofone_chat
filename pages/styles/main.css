@@ -1062,3 +1062,273 @@ body {
     justify-content: center;
     min-width: 140px;
 }
+.message-reactions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.reaction-chip,
+.reaction-add-btn {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.reaction-chip.active {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.message-reaction-picker {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+    opacity: 0.8;
+    padding: 4px;
+    border-radius: 10px;
+    background: #1a1f2b;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.hidden { display: none !important; }
+
+.message {
+    position: relative;
+}
+
+.message-hover-actions {
+    position: absolute;
+    right: 8px;
+    top: 8px;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    z-index: 2;
+}
+
+.message:hover .message-hover-actions {
+    display: flex;
+}
+
+.message-plus-btn {
+    border: 1px solid rgba(255,255,255,0.16);
+    background: #1f2330;
+    color: var(--text-primary);
+    border-radius: 8px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+    font-size: 14px;
+    filter: saturate(0);
+    transition: filter 0.2s ease;
+}
+
+.message-plus-btn:hover {
+    filter: saturate(1);
+}
+
+.message-plus-btn:focus-visible,
+.reaction-chip:focus-visible,
+.reaction-add-btn:focus-visible,
+.context-emoji-btn:focus-visible,
+.message-reply-btn:focus-visible,
+.context-main-action:focus-visible,
+.context-emoji-list-item:focus-visible,
+.context-emoji-more:focus-visible,
+.message-reply:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+
+.message-context-menu {
+    position: fixed;
+    z-index: 9999;
+    background: #1a1f2b;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 220px;
+}
+
+.message-context-menu button {
+    background: transparent;
+    color: var(--text-primary);
+    border: none;
+    text-align: left;
+    padding: 8px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.message-context-menu button:hover {
+    background: rgba(255,255,255,0.08);
+}
+
+.reply-preview {
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.03);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.reply-preview-close {
+    background: transparent;
+    color: var(--text-dim);
+    border: none;
+    cursor: pointer;
+}
+
+
+.message-reply {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    border-left: 2px solid var(--accent);
+    padding: 0 0 0 8px;
+    background: transparent;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
+    cursor: pointer;
+    text-align: left;
+}
+
+.message-reply-btn {
+    border: 1px solid rgba(255,255,255,0.16);
+    background: #1f2330;
+    color: var(--text-primary);
+    border-radius: 8px;
+    width: 28px;
+    height: 28px;
+    cursor: pointer;
+}
+
+.message-reply:hover {
+    color: var(--text-primary);
+}
+
+.message-jump-highlight {
+    animation: jumpHighlight 1.4s ease;
+}
+
+@keyframes jumpHighlight {
+    0% { background: rgba(99, 102, 241, 0.35); }
+    100% { background: transparent; }
+}
+
+.message-text--deleted {
+    color: rgba(229, 231, 235, 0.55);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-style: italic;
+}
+
+.message-context-menu,
+.message-context-emoji-menu {
+    background: linear-gradient(135deg, rgba(255,255,255,0.12), rgba(255,255,255,0.04));
+    border: 1px solid rgba(255,255,255,0.18);
+    backdrop-filter: blur(18px) saturate(1.2);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    box-shadow: 0 18px 45px rgba(5, 8, 20, 0.45);
+}
+
+.context-quick-reactions {
+    display: flex;
+    gap: 10px;
+    padding: 10px 8px 6px;
+}
+
+.context-emoji-btn {
+    width: 42px;
+    height: 42px;
+    border: none;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+}
+
+.context-main-action {
+    background: transparent;
+    border: none;
+    color: #f3f4f6;
+    border-radius: 10px;
+    padding: 11px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+}
+
+.context-main-action:hover,
+.context-emoji-btn:hover {
+    background: rgba(255,255,255,0.14);
+}
+
+.context-divider {
+    height: 1px;
+    margin: 8px 0;
+    background: rgba(255,255,255,0.1);
+}
+
+.message-context-emoji-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 260px;
+    border-radius: 12px;
+    padding: 8px;
+}
+
+.context-emoji-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 360px;
+    overflow-y: auto;
+}
+
+.context-emoji-list-item {
+    background: transparent;
+    border: none;
+    color: #f3f4f6;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 8px;
+    padding: 6px 8px;
+    cursor: pointer;
+}
+
+.context-emoji-list-item:hover,
+.context-emoji-more:hover {
+    background: rgba(255,255,255,0.14);
+}
+
+.context-emoji-more {
+    margin-top: 8px;
+    width: 100%;
+    background: transparent;
+    color: #e5e7eb;
+    border: none;
+    border-radius: 8px;
+    padding: 8px;
+    cursor: pointer;
+}

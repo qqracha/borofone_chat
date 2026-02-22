@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import TYPE_CHECKING
 from redis.asyncio import Redis
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 
 from app.infra.redis import redis_client
 from app.models import Message, Attachment
@@ -59,11 +59,23 @@ async def create_message_with_nonce(
 
     # Helper для создания сообщения с вложениями
     async def _create_message_with_attachments() -> Message:
+        if payload.reply_to_id is not None:
+            reply_stmt = select(Message).where(
+                Message.id == payload.reply_to_id,
+                Message.room_id == room_id,
+            )
+            reply_message = (await db.execute(reply_stmt)).scalar_one_or_none()
+            if not reply_message:
+                raise HTTPException(status_code=400, detail="reply target not found")
+            if reply_message.deleted_at is not None:
+                raise HTTPException(status_code=400, detail="reply target was deleted")
+
         msg = Message(
             room_id=room_id,
             user_id=user_id,
             body=payload.body,
             nonce=payload.nonce,
+            reply_to_id=payload.reply_to_id,
         )
         db.add(msg)
         await db.flush()  # Получаем msg.id
@@ -86,7 +98,7 @@ async def create_message_with_nonce(
         stmt = (
             select(Message)
             .where(Message.id == msg.id)
-            .options(selectinload(Message.attachments))
+            .options(selectinload(Message.attachments), selectinload(Message.reactions), joinedload(Message.reply_to).joinedload(Message.user))
         )
         result = await db.execute(stmt)
         return result.scalar_one()
@@ -104,7 +116,7 @@ async def create_message_with_nonce(
         stmt = select(Message).where(
             Message.user_id == user_id,
             Message.nonce == payload.nonce
-        ).options(selectinload(Message.attachments))
+        ).options(selectinload(Message.attachments), selectinload(Message.reactions), joinedload(Message.reply_to).joinedload(Message.user))
         
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
@@ -134,7 +146,7 @@ async def create_message_with_nonce(
                     stmt = (
                         select(Message)
                         .where(Message.id == msg_id)
-                        .options(selectinload(Message.attachments))
+                        .options(selectinload(Message.attachments), selectinload(Message.reactions), joinedload(Message.reply_to).joinedload(Message.user))
                     )
                     result = await db.execute(stmt)
                     existing = result.scalar_one_or_none()

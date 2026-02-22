@@ -25,6 +25,22 @@ let currentUser = null;
 let rooms = [];
 let shouldRemoveAvatar = false;
 let badgesInitialized = false;  // Флаг: badges загружены один раз
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉'];
+const REACTION_TRIGGER_EMOJIS = ['😀', '😎', '✨', '🎯', '🫶', '😺', '🤙', '🌈'];
+const ALL_EMOJI_OPTIONS = [
+    { key: ':joy:', emoji: '😂' },
+    { key: ':grin:', emoji: '😁' },
+    { key: ':cow:', emoji: '🐮' },
+    { key: ':heart_eyes:', emoji: '😍' },
+    { key: ':thinking:', emoji: '🤔' },
+    { key: ':thumbsup:', emoji: '👍' },
+    { key: ':revolving_hearts:', emoji: '💞' },
+    { key: ':fearful:', emoji: '😨' },
+    { key: ':astonished:', emoji: '😮' },
+    { key: ':rage:', emoji: '😡' },
+];
+let replyToMessage = null;
+let activeReactionPickerFor = null;
 // ==========================================
 // DOM ELEMENTS
 // ==========================================
@@ -56,6 +72,26 @@ const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
 const currentUserAvatar = document.getElementById('currentUserAvatar');
 const currentUserName = document.getElementById('currentUserName');
 const currentUserUsername = document.getElementById('currentUserUsername');
+
+const replyPreview = document.createElement('div');
+replyPreview.className = 'reply-preview hidden';
+replyPreview.innerHTML = '<div class="reply-preview-content"></div><button class="reply-preview-close" type="button">✕</button>';
+messageForm.parentElement.insertBefore(replyPreview, messageForm);
+
+const messageContextMenu = document.createElement('div');
+messageContextMenu.className = 'message-context-menu hidden';
+messageContextMenu.innerHTML = `
+    <div class="context-quick-reactions" data-context-quick-reactions></div>
+    <button type="button" class="context-main-action" data-context-action="react">Добавить реакцию <span>›</span></button>
+    <div class="context-divider"></div>
+    <button type="button" class="context-main-action" data-context-action="reply">Ответить <span>↩</span></button>
+    <button type="button" class="context-main-action hidden" data-context-action="delete">Удалить сообщение <span>🗑</span></button>
+`;
+document.body.appendChild(messageContextMenu);
+
+const messageContextEmojiMenu = document.createElement('div');
+messageContextEmojiMenu.className = 'message-context-emoji-menu hidden';
+document.body.appendChild(messageContextEmojiMenu);
 
 // ==========================================
 // AUTH FUNCTIONS
@@ -325,6 +361,7 @@ function addMessage(msg, animate = false) {
     const messageEl = document.createElement('div');
     messageEl.className = 'message' + (animate ? ' message-new' : '');
     messageEl.dataset.messageId = msg.id;
+    messageEl.dataset.userId = msg.user?.id || 0;
     
     // message-unread больше не нужен — оставляем только divider
 
@@ -344,8 +381,13 @@ function addMessage(msg, animate = false) {
         : '';
     
     // Скрываем текст если пустой и есть вложения
+    const isDeleted = Boolean(msg.is_deleted);
+    messageEl.dataset.isDeleted = isDeleted ? '1' : '0';
     const bodyText = msg.body ? escapeHtml(msg.body) : '';
-    const bodyHtml = bodyText ? `<div class="message-text">${bodyText}</div>` : '';
+    const bodyHtml = bodyText ? `<div class="message-text${isDeleted ? ' message-text--deleted' : ''}">${bodyText}</div>` : '';
+
+    const reactionsHtml = renderReactions(msg.reactions || []);
+    
 
     messageEl.innerHTML = `
         <div class="message-avatar">
@@ -359,8 +401,15 @@ function addMessage(msg, animate = false) {
                 <span class="message-username">@${escapeHtml(username)}</span>
                 <span class="message-time">${time}</span>
             </div>
+            ${renderReplyPreview(msg.reply_to)}
             ${bodyHtml}
             ${attachmentsHtml}
+            <div class="message-reactions" data-reactions-for="${msg.id}">${reactionsHtml}</div>
+            <div class="message-hover-actions">
+                <button class="message-plus-btn" data-open-reaction-picker="${msg.id}" type="button">${getRandomReactionTriggerEmoji()}</button>
+                <button class="message-reply-btn" data-hover-reply="${msg.id}" type="button"${isDeleted ? ' disabled' : ''}>↩</button>
+                <div class="message-reaction-picker hidden" data-reaction-picker-for="${msg.id}">${renderReactionPicker(msg.id)}</div>
+            </div>
         </div>
     `;
 
@@ -376,6 +425,333 @@ function addMessage(msg, animate = false) {
 
     messagesList.appendChild(messageEl);
     if (animate) scrollToBottomWithImages();
+}
+
+
+
+function renderContextQuickReactions() {
+    const wrap = messageContextMenu.querySelector('[data-context-quick-reactions]');
+    if (!wrap) return;
+    wrap.innerHTML = REACTION_EMOJIS.map((emoji) => `
+        <button type="button" class="context-emoji-btn" data-context-emoji="${escapeHtml(emoji)}">${escapeHtml(emoji)}</button>
+    `).join('');
+}
+
+function renderContextAllEmojiMenu() {
+    messageContextEmojiMenu.innerHTML = `
+        <div class="context-emoji-list">
+            ${ALL_EMOJI_OPTIONS.map((item) => `
+                <button type="button" class="context-emoji-list-item" data-context-emoji="${escapeHtml(item.emoji)}">
+                    <span>${escapeHtml(item.key)}</span><span>${escapeHtml(item.emoji)}</span>
+                </button>
+            `).join('')}
+        </div>
+        <button type="button" class="context-emoji-more" data-context-action="emoji-more">Показать больше</button>
+    `;
+}
+
+function getRandomReactionTriggerEmoji() {
+    const index = Math.floor(Math.random() * REACTION_TRIGGER_EMOJIS.length);
+    return REACTION_TRIGGER_EMOJIS[index];
+}
+
+function renderReactions(reactions) {
+    if (!reactions || reactions.length === 0) return '';
+    return reactions.map((reaction) => `
+        <button class="reaction-chip ${reaction.reacted_by_me ? 'active' : ''}" data-emoji="${escapeHtml(reaction.emoji)}" type="button">
+            <span>${escapeHtml(reaction.emoji)}</span>
+            <span>${escapeHtml(String(reaction.count))}</span>
+        </button>
+    `).join('');
+}
+
+function renderReactionPicker(messageId) {
+    const popular = REACTION_EMOJIS.map((emoji) => `
+        <button class="reaction-add-btn" data-add-reaction="${escapeHtml(emoji)}" data-message-id="${messageId}" type="button">${escapeHtml(emoji)}</button>
+    `).join('');
+    return `${popular}<button class="reaction-add-btn reaction-add-btn--all" data-open-all-emoji="${messageId}" type="button">＋</button>`;
+}
+
+function renderReplyPreview(replyTo) {
+    if (!replyTo) return '';
+    const user = replyTo.user?.display_name || replyTo.user?.username || 'Unknown';
+    const body = (replyTo.body || '').trim();
+    const shortBody = body.length > 120 ? `${body.slice(0, 120)}...` : body;
+    return `<button class="message-reply" data-jump-to-message="${replyTo.id}" type="button">↩ <strong>${escapeHtml(user)}</strong>: ${escapeHtml(shortBody || '[вложение]')}</button>`;
+}
+
+function jumpToMessage(messageId) {
+    const target = messagesList.querySelector(`[data-message-id="${messageId}"]`);
+    if (!target) return;
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('message-jump-highlight');
+    setTimeout(() => target.classList.remove('message-jump-highlight'), 1400);
+}
+
+function setReplyTarget(messageEl) {
+    if (!messageEl) return;
+    if (messageEl.dataset.isDeleted === '1') return;
+    const author = messageEl.querySelector('.message-author')?.textContent || 'Unknown';
+    const text = messageEl.querySelector('.message-text')?.textContent || '[вложение]';
+    replyToMessage = { id: Number(messageEl.dataset.messageId), author, body: text };
+    const shortText = text.length > 120 ? `${text.slice(0, 120)}...` : text;
+    replyPreview.querySelector('.reply-preview-content').textContent = `Ответ ${author}: ${shortText}`;
+    replyPreview.classList.remove('hidden');
+}
+
+function clearReplyTarget() {
+    replyToMessage = null;
+    replyPreview.classList.add('hidden');
+}
+
+function openReactionPicker(messageId) {
+    closeReactionPicker();
+    const picker = messagesList.querySelector(`[data-reaction-picker-for="${messageId}"]`);
+    if (!picker) return;
+    picker.classList.remove('hidden');
+    activeReactionPickerFor = Number(messageId);
+}
+
+function closeReactionPicker() {
+    if (!activeReactionPickerFor) return;
+    const picker = messagesList.querySelector(`[data-reaction-picker-for="${activeReactionPickerFor}"]`);
+    if (picker) picker.classList.add('hidden');
+    activeReactionPickerFor = null;
+}
+
+function openAllEmojiPrompt(messageId) {
+    const emoji = window.prompt('Введите emoji для реакции');
+    if (!emoji) return;
+    toggleReaction(messageId, emoji.trim());
+    closeReactionPicker();
+}
+
+function openMessageContextMenu(event, messageEl) {
+    event.preventDefault();
+    if (!messageEl) return;
+
+    const messageUserId = Number(messageEl.dataset.userId || 0);
+    const isDeletedMessage = messageEl.dataset.isDeleted === '1';
+    const deleteBtn = messageContextMenu.querySelector('[data-context-action="delete"]');
+    const reactBtn = messageContextMenu.querySelector('[data-context-action="react"]');
+    const replyBtn = messageContextMenu.querySelector('[data-context-action="reply"]');
+    const quickReactions = messageContextMenu.querySelector('[data-context-quick-reactions]');
+
+    if (deleteBtn) {
+        deleteBtn.classList.toggle('hidden', Number(messageUserId) !== Number(currentUser?.id));
+    }
+    if (reactBtn) {
+        reactBtn.classList.toggle('hidden', isDeletedMessage);
+    }
+    if (replyBtn) {
+        replyBtn.classList.toggle('hidden', isDeletedMessage);
+    }
+    if (quickReactions) {
+        quickReactions.classList.toggle('hidden', isDeletedMessage);
+    }
+
+    if (!isDeletedMessage) {
+        renderContextQuickReactions();
+        renderContextAllEmojiMenu();
+    } else {
+        messageContextEmojiMenu.classList.add('hidden');
+    }
+
+    messageContextMenu.dataset.messageId = messageEl.dataset.messageId;
+
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+    messageContextMenu.classList.remove('hidden');
+    messageContextMenu.style.left = '0px';
+    messageContextMenu.style.top = '0px';
+
+    const menuRect = messageContextMenu.getBoundingClientRect();
+    let menuX = event.clientX;
+    let menuY = event.clientY;
+
+    if (menuX + menuRect.width > viewportWidth) {
+        menuX = Math.max(0, viewportWidth - menuRect.width);
+    }
+    if (menuY + menuRect.height > viewportHeight) {
+        menuY = Math.max(0, viewportHeight - menuRect.height);
+    }
+
+    messageContextMenu.style.left = `${menuX}px`;
+    messageContextMenu.style.top = `${menuY}px`;
+
+    const emojiOffsetX = 270;
+    const wasEmojiHidden = messageContextEmojiMenu.classList.contains('hidden');
+    const prevEmojiVisibility = messageContextEmojiMenu.style.visibility;
+
+    messageContextEmojiMenu.style.visibility = 'hidden';
+    messageContextEmojiMenu.classList.remove('hidden');
+    messageContextEmojiMenu.style.left = '0px';
+    messageContextEmojiMenu.style.top = '0px';
+
+    const emojiRect = messageContextEmojiMenu.getBoundingClientRect();
+    let emojiX = menuX + emojiOffsetX;
+    let emojiY = menuY;
+
+    if (emojiX + emojiRect.width > viewportWidth) {
+        emojiX = Math.max(0, menuX - emojiRect.width);
+    }
+    if (emojiY + emojiRect.height > viewportHeight) {
+        emojiY = Math.max(0, viewportHeight - emojiRect.height);
+    }
+
+    messageContextEmojiMenu.style.left = `${emojiX}px`;
+    messageContextEmojiMenu.style.top = `${emojiY}px`;
+
+    if (wasEmojiHidden) {
+        messageContextEmojiMenu.classList.add('hidden');
+    }
+    messageContextEmojiMenu.style.visibility = prevEmojiVisibility;
+}
+
+function closeMessageContextMenu() {
+    messageContextMenu.classList.add('hidden');
+    messageContextEmojiMenu.classList.add('hidden');
+}
+
+async function deleteMessage(messageId) {
+    if (!currentRoom || !messageId) return;
+
+    try {
+        const response = await fetchWithAuth(`${getApiUrl()}/rooms/${currentRoom.id}/messages/${messageId}`, { method: 'DELETE' });
+        if (!response.ok) {
+            throw new Error('Failed to delete message');
+        }
+
+        const data = await response.json();
+        applyDeletedMessage(data.message_id, data.body || 'Сообщение удалено');
+    } catch (err) {
+        console.error('[delete] failed', err);
+
+        // Fallback to WS if HTTP unavailable
+        try {
+            await wsReady;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'message_delete',
+                    room_id: currentRoom.id,
+                    message_id: Number(messageId),
+                }));
+            }
+        } catch (wsErr) {
+            console.error('[delete] ws fallback failed', wsErr);
+        }
+    }
+}
+
+function applyDeletedMessage(messageId, body = 'Сообщение удалено') {
+    const messageEl = messagesList.querySelector(`[data-message-id="${messageId}"]`);
+    if (!messageEl) return;
+
+    const textEl = messageEl.querySelector('.message-text');
+    if (textEl) {
+        textEl.textContent = body;
+        textEl.classList.add('message-text--deleted');
+    } else {
+        const content = messageEl.querySelector('.message-content');
+        if (content) {
+            const node = document.createElement('div');
+            node.className = 'message-text message-text--deleted';
+            node.textContent = body;
+            content.appendChild(node);
+        }
+    }
+
+    messageEl.dataset.isDeleted = '1';
+
+    const hoverActions = messageEl.querySelector('.message-hover-actions');
+    if (hoverActions) {
+        hoverActions.classList.add('hidden');
+    }
+
+    const replyBtn = messageEl.querySelector('.message-reply-btn');
+    if (replyBtn) {
+        replyBtn.setAttribute('disabled', 'disabled');
+    }
+}
+
+async function toggleReaction(messageId, emoji) {
+    if (!currentRoom || !messageId || !emoji) return;
+
+    try {
+        const response = await fetchWithAuth(`${getApiUrl()}/rooms/${currentRoom.id}/messages/${messageId}/reactions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ emoji }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to toggle reaction');
+        }
+
+        const data = await response.json();
+        applyReactionUpdate(data.message_id, data.reactions || [], data.actor_user_id, data.action, data.emoji);
+    } catch (err) {
+        console.error('[reaction] toggle failed', err);
+
+        // Fallback to WS if HTTP unavailable
+        try {
+            await wsReady;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'reaction',
+                    room_id: currentRoom.id,
+                    message_id: Number(messageId),
+                    emoji,
+                }));
+            }
+        } catch (wsErr) {
+            console.error('[reaction] ws fallback failed', wsErr);
+        }
+    }
+}
+
+function applyReactionUpdate(messageId, reactions, actorUserId = null, action = null, actionEmoji = null) {
+    const container = messagesList.querySelector(`[data-reactions-for="${messageId}"]`);
+    if (!container) return;
+
+    const previousOrder = Array.from(container.querySelectorAll('.reaction-chip')).map((el) => el.dataset.emoji);
+    const previousMyState = {};
+    for (const chip of container.querySelectorAll('.reaction-chip')) {
+        previousMyState[chip.dataset.emoji] = chip.classList.contains('active');
+    }
+
+    const incoming = reactions || [];
+    const byEmoji = Object.fromEntries(incoming.map((r) => [r.emoji, { ...r }]));
+
+    for (const reaction of incoming) {
+        const emoji = reaction.emoji;
+        let reactedByMe = previousMyState[emoji] || false;
+
+        if (Number(actorUserId) === Number(currentUser?.id) && emoji === actionEmoji) {
+            reactedByMe = action === 'added';
+        }
+
+        byEmoji[emoji].reacted_by_me = reactedByMe;
+    }
+
+    const ordered = [];
+    const seen = new Set();
+    for (const emoji of previousOrder) {
+        if (byEmoji[emoji]) {
+            ordered.push(byEmoji[emoji]);
+            seen.add(emoji);
+        }
+    }
+    for (const reaction of incoming) {
+        if (!seen.has(reaction.emoji)) {
+            ordered.push(byEmoji[reaction.emoji]);
+            seen.add(reaction.emoji);
+        }
+    }
+
+    container.innerHTML = renderReactions(ordered);
 }
 
 function normalizeAvatarUrl(avatarUrl) {
@@ -568,6 +944,7 @@ async function sendMessage() {
                 body: text || '',  // Пустая строка допустима если есть вложения
                 nonce: nonce,
                 attachments: uploadedAttachments,
+                reply_to_id: replyToMessage?.id ?? null,
             }));
             
             // Очищаем вложения после отправки
@@ -578,6 +955,7 @@ async function sendMessage() {
             // Своё сообщение — сразу обновляем lastRead (оптимистично)
             // Когда придёт через WS с ID — обновим снова
             markCurrentRoomAsRead();
+            clearReplyTarget();
         } else {
             // WS недоступен — HTTP fallback
             console.warn('[sendMessage] WS not open, using HTTP fallback');
@@ -587,7 +965,8 @@ async function sendMessage() {
                 body: JSON.stringify({ 
                     body: text || '',  // Пустая строка допустима если есть вложения
                     nonce: nonce,
-                    attachments: uploadedAttachments 
+                    attachments: uploadedAttachments,
+                    reply_to_id: replyToMessage?.id ?? null
                 }),
             });
 
@@ -604,6 +983,7 @@ async function sendMessage() {
             if (!messagesList.querySelector(`[data-message-id="${msg.id}"]`)) {
                 addMessage(msg, true);
             }
+            clearReplyTarget();
         }
     } catch (err) {
         console.error('[sendMessage] error:', err);
@@ -663,6 +1043,11 @@ function connectWebSocket() {
                             }
                         }
                     }
+                } else if (data.type === 'reaction') {
+                    applyReactionUpdate(data.message_id, data.reactions || [], data.actor_user_id, data.action, data.emoji);
+                    closeReactionPicker();
+                } else if (data.type === 'message_deleted') {
+                    applyDeletedMessage(data.message_id, data.body || 'Сообщение удалено');
                 } else if (data.type === 'error') {
                     console.error('[WS] error:', data.detail);
                     if (data.code === 'unauthorized') redirectToLogin();
@@ -807,6 +1192,137 @@ async function saveSettings() {
 messageForm.addEventListener('submit', (e) => {
     e.preventDefault();
     sendMessage();
+});
+
+messagesList.addEventListener('click', (event) => {
+    const plusBtn = event.target.closest('[data-open-reaction-picker]');
+    if (plusBtn) {
+        const messageId = plusBtn.dataset.openReactionPicker;
+        if (activeReactionPickerFor === Number(messageId)) {
+            closeReactionPicker();
+        } else {
+            openReactionPicker(messageId);
+        }
+        return;
+    }
+
+    const addBtn = event.target.closest('[data-add-reaction]');
+    if (addBtn) {
+        toggleReaction(addBtn.dataset.messageId, addBtn.dataset.addReaction);
+        closeReactionPicker();
+        return;
+    }
+
+    const allBtn = event.target.closest('[data-open-all-emoji]');
+    if (allBtn) {
+        openAllEmojiPrompt(allBtn.dataset.openAllEmoji);
+        return;
+    }
+
+    const reactionBtn = event.target.closest('.reaction-chip');
+    if (reactionBtn) {
+        const messageEl = reactionBtn.closest('.message');
+        if (!messageEl) return;
+        if (messageEl.dataset.isDeleted === '1') return;
+        toggleReaction(messageEl.dataset.messageId, reactionBtn.dataset.emoji);
+        return;
+    }
+
+    const hoverReplyBtn = event.target.closest('[data-hover-reply]');
+    if (hoverReplyBtn) {
+        const messageEl = messagesList.querySelector(`[data-message-id="${hoverReplyBtn.dataset.hoverReply}"]`);
+        if (!messageEl) return;
+        setReplyTarget(messageEl);
+        messageInput.focus();
+        closeReactionPicker();
+        return;
+    }
+
+    const jumpBtn = event.target.closest('[data-jump-to-message]');
+    if (jumpBtn) {
+        jumpToMessage(jumpBtn.dataset.jumpToMessage);
+        return;
+    }
+
+    if (!event.target.closest('.message-hover-actions')) {
+        closeReactionPicker();
+    }
+});
+
+messagesList.addEventListener('contextmenu', (event) => {
+    const messageEl = event.target.closest('.message');
+    if (!messageEl) return;
+    openMessageContextMenu(event, messageEl);
+});
+
+messageContextMenu.addEventListener('click', (event) => {
+    const actionBtn = event.target.closest('[data-context-action]');
+    const emojiBtn = event.target.closest('[data-context-emoji]');
+
+    const messageId = messageContextMenu.dataset.messageId;
+    const messageEl = messagesList.querySelector(`[data-message-id="${messageId}"]`);
+
+    if (emojiBtn) {
+        if (messageEl?.dataset.isDeleted === '1') {
+            closeMessageContextMenu();
+            return;
+        }
+        toggleReaction(messageId, emojiBtn.dataset.contextEmoji);
+        closeMessageContextMenu();
+        return;
+    }
+
+    if (!actionBtn || !messageEl) return;
+
+    if (actionBtn.dataset.contextAction === 'react') {
+        if (messageEl.dataset.isDeleted === '1') {
+            closeMessageContextMenu();
+            return;
+        }
+        messageContextEmojiMenu.classList.remove('hidden');
+        return;
+    }
+    if (actionBtn.dataset.contextAction === 'reply') {
+        setReplyTarget(messageEl);
+        messageInput.focus();
+    }
+    if (actionBtn.dataset.contextAction === 'delete') {
+        deleteMessage(messageId);
+    }
+
+    closeMessageContextMenu();
+});
+
+messageContextEmojiMenu.addEventListener('click', (event) => {
+    const emojiBtn = event.target.closest('[data-context-emoji]');
+    const actionBtn = event.target.closest('[data-context-action]');
+    const messageId = messageContextMenu.dataset.messageId;
+
+    if (emojiBtn) {
+        const messageEl = messagesList.querySelector(`[data-message-id="${messageId}"]`);
+        if (messageEl?.dataset.isDeleted === '1') {
+            closeMessageContextMenu();
+            return;
+        }
+        toggleReaction(messageId, emojiBtn.dataset.contextEmoji);
+        closeMessageContextMenu();
+        return;
+    }
+
+    if (actionBtn && actionBtn.dataset.contextAction === 'emoji-more') {
+        openAllEmojiPrompt(messageId);
+        closeMessageContextMenu();
+    }
+});
+
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.message-context-menu') && !event.target.closest('.message-context-emoji-menu')) {
+        closeMessageContextMenu();
+    }
+});
+
+replyPreview.querySelector('.reply-preview-close').addEventListener('click', () => {
+    clearReplyTarget();
 });
 
 createRoomBtn.addEventListener('click', openModal);
