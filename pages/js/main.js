@@ -49,6 +49,7 @@ let localStream = null;
 let isMuted = false;
 let isDeafened = false;
 const peerConnections = new Map();
+const voiceRoomParticipantsByRoom = {};
 // ==========================================
 // DOM ELEMENTS
 // ==========================================
@@ -108,6 +109,11 @@ document.body.appendChild(messageContextMenu);
 const messageContextEmojiMenu = document.createElement('div');
 messageContextEmojiMenu.className = 'message-context-emoji-menu hidden';
 document.body.appendChild(messageContextEmojiMenu);
+
+const roomContextMenu = document.createElement('div');
+roomContextMenu.className = 'room-context-menu hidden';
+roomContextMenu.innerHTML = '<button type="button" id="roomContextAction"></button>';
+document.body.appendChild(roomContextMenu);
 
 // ==========================================
 // AUTH FUNCTIONS
@@ -1088,24 +1094,28 @@ function connectWebSocket() {
                 } else if (data.type === 'room_joined') {
                     currentVoiceRoomId = data.room_id;
                     voiceParticipants = data.participants || [];
+                    voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                     renderVoiceRooms();
                     renderVoiceParticipants();
                     ensurePeerConnections();
                 } else if (data.type === 'participant_joined') {
                     if (data.room_id === currentVoiceRoomId) {
                         voiceParticipants = upsertVoiceParticipant(data.participant);
+                        voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                         renderVoiceParticipants();
                         ensurePeerConnections();
                     }
                 } else if (data.type === 'participant_left') {
                     if (data.room_id === currentVoiceRoomId) {
                         voiceParticipants = voiceParticipants.filter(p => p.user_id !== data.participant.user_id);
+                        voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                         closePeerConnection(data.participant.user_id);
                         renderVoiceParticipants();
                     }
                 } else if (data.type === 'participant_updated') {
                     if (data.room_id === currentVoiceRoomId) {
                         voiceParticipants = upsertVoiceParticipant(data.participant);
+                        voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                         renderVoiceParticipants();
                     }
                 } else if (data.type === 'speaking') {
@@ -1401,6 +1411,75 @@ document.addEventListener('click', (event) => {
 replyPreview.querySelector('.reply-preview-close').addEventListener('click', () => {
     clearReplyTarget();
 });
+
+
+roomsList.addEventListener('contextmenu', async (event) => {
+    const item = event.target.closest('.room-item');
+    if (!item) return;
+    event.preventDefault();
+    const roomId = Number(item.dataset.roomId);
+    openRoomContextMenu({ x: event.clientX, y: event.clientY, roomId, type: 'text' });
+});
+
+voiceRoomsList.addEventListener('contextmenu', async (event) => {
+    const item = event.target.closest('[data-voice-room-id]');
+    if (!item) return;
+    event.preventDefault();
+    const roomId = Number(item.dataset.voiceRoomId);
+    openRoomContextMenu({ x: event.clientX, y: event.clientY, roomId, type: 'voice' });
+});
+
+document.addEventListener('click', (event) => {
+    if (!event.target.closest('.room-context-menu')) {
+        roomContextMenu.classList.add('hidden');
+    }
+});
+
+function openRoomContextMenu({ x, y, roomId, type }) {
+    const actionBtn = roomContextMenu.querySelector('#roomContextAction');
+    roomContextMenu.style.left = `${x}px`;
+    roomContextMenu.style.top = `${y}px`;
+
+    if (currentUser?.role !== 'admin') {
+        actionBtn.textContent = 'Не хватает прав';
+        actionBtn.disabled = true;
+        actionBtn.classList.add('insufficient-rights');
+        actionBtn.onclick = null;
+    } else {
+        actionBtn.textContent = type === 'voice' ? 'Удалить аудиокомнату' : 'Удалить комнату';
+        actionBtn.disabled = false;
+        actionBtn.classList.remove('insufficient-rights');
+        actionBtn.onclick = async () => {
+            await deleteRoomByType(roomId, type);
+            roomContextMenu.classList.add('hidden');
+        };
+    }
+
+    roomContextMenu.classList.remove('hidden');
+}
+
+async function deleteRoomByType(roomId, type) {
+    const endpoint = type === 'voice' ? `${getApiUrl()}/voice-rooms/${roomId}` : `${getApiUrl()}/rooms/${roomId}`;
+    const response = await fetchWithAuth(endpoint, { method: 'DELETE' });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        alert(error.detail || 'Не удалось удалить комнату');
+        return;
+    }
+    if (type === 'voice') {
+        if (currentVoiceRoomId === roomId) leaveVoiceRoom();
+        await loadVoiceRooms();
+    } else {
+        if (currentRoom?.id === roomId) {
+            currentRoom = null;
+            roomName.textContent = 'Выберите комнату';
+            messagesList.innerHTML = '<div class="placeholder-message"><span class="placeholder-icon">💬</span><p>Выберите комнату, чтобы начать общение</p></div>';
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+        }
+        await loadRooms();
+    }
+}
 
 createRoomBtn.addEventListener('click', openModal);
 closeModalBtn.addEventListener('click', closeModal);
@@ -1735,12 +1814,28 @@ async function loadVoiceRooms() {
     const response = await fetchWithAuth(`${getApiUrl()}/voice-rooms`);
     if (!response.ok) return;
     voiceRooms = await response.json();
+
+    await Promise.all(voiceRooms.map(async (room) => {
+        try {
+            const participantsRes = await fetchWithAuth(`${getApiUrl()}/voice-rooms/${room.id}/participants`);
+            if (!participantsRes.ok) return;
+            voiceRoomParticipantsByRoom[room.id] = await participantsRes.json();
+        } catch (_) {
+            voiceRoomParticipantsByRoom[room.id] = [];
+        }
+    }));
+
     renderVoiceRooms();
 }
 
 function renderVoiceRooms() {
     if (!voiceRoomsList) return;
-    voiceRoomsList.innerHTML = voiceRooms.map(room => `<div class="voice-room-item ${room.id === currentVoiceRoomId ? 'active' : ''}" data-voice-room-id="${room.id}">🔊 ${escapeHtml(room.name)}</div>`).join('');
+    voiceRoomsList.innerHTML = voiceRooms.map(room => {
+        const participants = voiceRoomParticipantsByRoom[room.id] || [];
+        const icons = participants.slice(0, 4).map(p => `<span class="voice-room-user-icon" title="${escapeHtml(p.display_name || p.username)}">${escapeHtml((p.display_name || p.username || '?')[0]?.toUpperCase() || '?')}</span>`).join('');
+        const more = participants.length > 4 ? `<span class="voice-room-user-more">+${participants.length - 4}</span>` : '';
+        return `<div class="voice-room-item ${room.id === currentVoiceRoomId ? 'active' : ''}" data-voice-room-id="${room.id}"><span class="voice-room-item-title">🔊 ${escapeHtml(room.name)}</span><span class="voice-room-users">${icons}${more}</span></div>`;
+    }).join('');
     voiceRoomState.textContent = currentVoiceRoomId ? `В комнате: ${escapeHtml((voiceRooms.find(r => r.id === currentVoiceRoomId) || {}).name || '')}` : 'Не в голосовой комнате';
     toggleMicBtn.disabled = !currentVoiceRoomId;
     toggleDeafenBtn.disabled = !currentVoiceRoomId;
@@ -1754,7 +1849,18 @@ function renderVoiceParticipants() {
 
 async function ensureLocalStream() {
     if (localStream) return localStream;
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: false,
+            channelCount: 1,
+            sampleRate: 48000,
+            sampleSize: 16,
+            latency: 0.01,
+        },
+        video: false,
+    });
     return localStream;
 }
 
@@ -1770,8 +1876,10 @@ function leaveVoiceRoom() {
         ws.send(JSON.stringify({ type: 'leave_room', room_id: currentVoiceRoomId }));
     }
     peerConnections.forEach((_, uid) => closePeerConnection(uid));
+    const leftRoomId = currentVoiceRoomId;
     currentVoiceRoomId = null;
     voiceParticipants = [];
+    if (leftRoomId) voiceRoomParticipantsByRoom[leftRoomId] = [];
     if (speakingInterval) {
         clearInterval(speakingInterval);
         speakingInterval = null;
@@ -1781,8 +1889,20 @@ function leaveVoiceRoom() {
 }
 
 function createPeerConnection(targetUserId) {
-    const pc = new RTCPeerConnection();
-    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    const pc = new RTCPeerConnection({
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+        iceCandidatePoolSize: 10,
+        iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+    });
+    localStream.getTracks().forEach(track => {
+        const sender = pc.addTrack(track, localStream);
+        const params = sender.getParameters();
+        if (!params.encodings) params.encodings = [{}];
+        params.encodings[0].maxBitrate = 64000;
+        params.encodings[0].priority = "high";
+        sender.setParameters(params).catch(() => {});
+    });
     pc.onicecandidate = (event) => {
         if (event.candidate && ws && currentVoiceRoomId) {
             ws.send(JSON.stringify({ type: 'rtc_ice', room_id: currentVoiceRoomId, target_user_id: targetUserId, payload: event.candidate }));

@@ -6,6 +6,7 @@ from app.dependencies import get_current_user
 from app.infra.db import get_db
 from app.models import User, VoiceRoom
 from app.schemas.voice import VoiceRoomCreate, VoiceRoomResponse
+from app.services.voice import voice_runtime
 
 router = APIRouter(prefix="/voice-rooms", tags=["Voice Rooms"])
 
@@ -59,3 +60,15 @@ async def delete_voice_room(
 
     room.is_active = False
     await db.commit()
+
+
+@router.get("/{room_id}/participants", response_model=list[dict])
+async def get_voice_room_participants(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    room = await db.get(VoiceRoom, room_id)
+    if not room or not room.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Voice room not found")
+    return await voice_runtime.participants_snapshot(room_id)
