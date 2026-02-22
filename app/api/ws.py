@@ -12,9 +12,10 @@ import json
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.infra.db import SessionLocal
-from app.models import User, Room
+from app.models import User, Room, Message, MessageReaction
 from app.schemas.messages import MessageCreate
 from app.security import get_user_id_from_token
 from app.services.messages import create_message_with_nonce
@@ -128,6 +129,99 @@ async def global_websocket_endpoint(
                         await user_joined_room(redis, room_id, user_id)
                     continue
                 
+                if msg_type == "reaction":
+                    room_id = data.get("room_id")
+                    message_id = data.get("message_id")
+                    emoji = (data.get("emoji") or "").strip()
+                    if not room_id or not message_id or not emoji:
+                        continue
+
+                    try:
+                        async with SessionLocal() as db:
+                            message_stmt = select(Message).where(Message.id == message_id, Message.room_id == room_id)
+                            message = (await db.execute(message_stmt)).scalar_one_or_none()
+                            if not message:
+                                continue
+
+                            existing_stmt = select(MessageReaction).where(
+                                MessageReaction.message_id == message_id,
+                                MessageReaction.user_id == user_id,
+                                MessageReaction.emoji == emoji,
+                            )
+                            existing = (await db.execute(existing_stmt)).scalar_one_or_none()
+                            action = "added"
+                            if existing:
+                                await db.delete(existing)
+                                action = "removed"
+                            else:
+                                db.add(MessageReaction(message_id=message_id, user_id=user_id, emoji=emoji))
+                            await db.commit()
+
+                            reactions_stmt = select(MessageReaction).where(MessageReaction.message_id == message_id)
+                            reactions = (await db.execute(reactions_stmt)).scalars().all()
+
+                        grouped = {}
+                        for reaction in reactions:
+                            grouped.setdefault(reaction.emoji, set()).add(reaction.user_id)
+
+                        payload = {
+                            "type": "reaction",
+                            "room_id": room_id,
+                            "message_id": message_id,
+                            "emoji": emoji,
+                            "action": action,
+                            "actor_user_id": user_id,
+                            "reactions": [
+                                {
+                                    "emoji": value,
+                                    "count": len(user_ids),
+                                    "reacted_by_me": False,
+                                }
+                                for value, user_ids in sorted(grouped.items(), key=lambda item: item[0])
+                            ],
+                        }
+
+                        if redis:
+                            await redis.publish(f"room:{room_id}", json.dumps(payload))
+                        else:
+                            await websocket.send_json(payload)
+                    except Exception as e:
+                        print(f"[WS] Reaction error: {e}")
+                    continue
+
+                if msg_type == "message_delete":
+                    room_id = data.get("room_id")
+                    message_id = data.get("message_id")
+                    if not room_id or not message_id:
+                        continue
+
+                    try:
+                        async with SessionLocal() as db:
+                            msg_stmt = select(Message).where(Message.id == message_id, Message.room_id == room_id)
+                            msg = (await db.execute(msg_stmt)).scalar_one_or_none()
+                            if not msg or msg.user_id != user_id:
+                                continue
+
+                            from datetime import datetime, timezone
+                            msg.body = "Сообщение удалено"
+                            msg.deleted_at = datetime.now(timezone.utc)
+                            await db.commit()
+
+                        payload = {
+                            "type": "message_deleted",
+                            "room_id": room_id,
+                            "message_id": message_id,
+                            "body": "Сообщение удалено",
+                            "deleted_at": msg.deleted_at.isoformat() if msg.deleted_at else None,
+                        }
+                        if redis:
+                            await redis.publish(f"room:{room_id}", json.dumps(payload))
+                        else:
+                            await websocket.send_json(payload)
+                    except Exception as e:
+                        print(f"[WS] Delete error: {e}")
+                    continue
+
                 if msg_type != "message":
                     continue
 
@@ -141,12 +235,33 @@ async def global_websocket_endpoint(
                         payload = MessageCreate(
                             body=data.get("body", ""), 
                             nonce=data.get("nonce"),
-                            attachments=data.get("attachments")
+                            attachments=data.get("attachments"),
+                            reply_to_id=data.get("reply_to_id")
                         )
                         msg = await create_message_with_nonce(
                             db, room_id, user_id, payload, redis,
                             attachments_data=payload.attachments
                         )
+                        msg = (
+                            await db.execute(
+                                select(Message)
+                                .where(Message.id == msg.id)
+                                .options(joinedload(Message.user), selectinload(Message.attachments), joinedload(Message.reply_to).joinedload(Message.user))
+                            )
+                        ).scalar_one()
+
+                        reply_to = None
+                        if msg.reply_to:
+                            reply_to = {
+                                "id": msg.reply_to.id,
+                                "body": msg.reply_to.body,
+                                "user": {
+                                    "id": msg.reply_to.user.id if msg.reply_to.user else 0,
+                                    "username": msg.reply_to.user.username if msg.reply_to.user else "Unknown",
+                                    "display_name": msg.reply_to.user.display_name if msg.reply_to.user else "Unknown User",
+                                    "avatar_url": msg.reply_to.user.avatar_url if msg.reply_to.user else None,
+                                },
+                            }
 
                         message_data = {
                             "type": "message",
@@ -174,6 +289,9 @@ async def global_websocket_endpoint(
                                 }
                                 for att in (msg.attachments or [])
                             ],
+                            "reactions": [],
+                            "reply_to": reply_to,
+                            "is_deleted": msg.deleted_at is not None,
                         }
 
                     if redis:

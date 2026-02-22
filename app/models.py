@@ -17,6 +17,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -192,6 +193,12 @@ class Message(Base):
         nullable=True,  # nullable на случай удаления юзера
         index=True
     )
+    reply_to_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Содержимое
     body: Mapped[str] = mapped_column(Text, nullable=False)
@@ -218,6 +225,17 @@ class Message(Base):
         "Attachment",
         back_populates="message",
         cascade="all, delete-orphan"
+    )
+    reactions: Mapped[list["MessageReaction"]] = relationship(
+        "MessageReaction",
+        back_populates="message",
+        cascade="all, delete-orphan"
+    )
+    reply_to: Mapped[Optional["Message"]] = relationship(
+        "Message",
+        remote_side="Message.id",
+        foreign_keys=[reply_to_id],
+        post_update=True,
     )
 
     # Индексы для быстрого поиска
@@ -249,3 +267,33 @@ class Attachment(Base):
         "Message",
         back_populates="attachments"
     )
+
+
+class MessageReaction(Base):
+    __tablename__ = "message_reactions"
+    __table_args__ = (
+        UniqueConstraint("message_id", "user_id", "emoji", name="uq_message_user_emoji"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    emoji: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    message: Mapped["Message"] = relationship("Message", back_populates="reactions")
+    user: Mapped["User"] = relationship("User")

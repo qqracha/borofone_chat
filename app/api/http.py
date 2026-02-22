@@ -1,196 +1,59 @@
-"""
-REST API endpoints for chat.
+"""REST API endpoints for chat."""
+import json
 
-All endpoints use Pydantic schemes for validation.
-"""
 from fastapi import APIRouter, Depends, HTTPException, status
-
+from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
-from redis.asyncio import Redis
 
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_admin
 from app.infra.db import get_db
 from app.infra.redis import get_redis
-from app.models import Message, Room, User
-from app.schemas.common import HealthResponse
+from app.models import Message, MessageReaction, Room, User
+from app.schemas.messages import (
+    AttachmentResponse,
+    MessageCreate,
+    MessageReplyPreview,
+    MessageResponse,
+    MessageUserResponse,
+    ReactionCreate,
+    ReactionResponse,
+)
 from app.schemas.rooms import RoomCreate, RoomResponse
-from app.schemas.messages import MessageCreate, MessageResponse, MessageUserResponse, AttachmentResponse
 from app.services.messages import create_message_with_nonce
-from app.dependencies import get_current_user, require_admin
 
 router = APIRouter()
 
-@router.post(
-    "/rooms",
-    dependencies=[Depends(require_admin)],
-    response_model=RoomResponse,
-    status_code=201,
-    summary="Create room",
-    description="Creating a new room.",
-)
-async def create_room(
-    payload: RoomCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Creating a new room.
 
-    **// Request Body:**
-        RoomCreate: {"title": "room_name"}
-
-    **// Validation:**
-        - `title` can be empty
-        - `title` max 100 characters
-        - Spaces at the edges are automatically removed
-
-    Returns:
-        RoomResponse: Created room with id
-
-    """
-    room = Room(
-        title=payload.title,
-        created_by=current_user.id
-    )
-    db.add(room)
-    await db.commit()
-    await db.refresh(room)
-    return {"id": room.id, "title": room.title}
-
-
-@router.get(
-    "/rooms/{room_id}/messages",
-    response_model=list[MessageResponse],
-    summary="Get message history",
-    description="Returns the last N messages of a room"
-)
-async def list_messages(
-    room_id: int,
-    limit: int = 50,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Get room message history.
-    Args:
-        room_id: ID rooms (path parameter)
-        limit: Number of message (query parameter, by default 50)
-    Returns:
-        list[MessageResponse]: List of message (from old to new)
-    """
-    stmt = (
-        select(Message)
-        .where(Message.room_id == room_id)
-        .options(joinedload(Message.user), selectinload(Message.attachments))
-        .order_by(Message.id.desc())
-        .limit(limit)
-    )
-
-    result = await db.execute(stmt)
-    messages = result.scalars().all()
-    messages = list(reversed(messages))
+def build_reactions_payload(reactions: list[MessageReaction], current_user_id: int) -> list[ReactionResponse]:
+    grouped: dict[str, set[int]] = {}
+    for reaction in reactions or []:
+        grouped.setdefault(reaction.emoji, set()).add(reaction.user_id)
     return [
-        MessageResponse(
-            id=msg.id,
-            room_id=msg.room_id,
-            nonce=msg.nonce,
-            body=msg.body,
-            created_at=msg.created_at.isoformat(),
-            edited_at=msg.edited_at.isoformat() if msg.edited_at else None,
-            user=MessageUserResponse(
-                id=msg.user.id if msg.user else 0,
-                username=msg.user.username if msg.user else "Unknown",
-                display_name=msg.user.display_name if msg.user else "Unknown User",
-                avatar_url=msg.user.avatar_url if msg.user else None
-            ),
-            attachments=[
-                AttachmentResponse(
-                    id=att.id,
-                    message_id=att.message_id,
-                    filename=att.filename,
-                    file_path=att.file_path,
-                    file_size=att.file_size,
-                    mime_type=att.mime_type,
-                    created_at=att.created_at.isoformat(),
-                )
-                for att in (msg.attachments or [])
-            ],
-        )
-        for msg in messages
+        ReactionResponse(emoji=emoji, count=len(user_ids), reacted_by_me=current_user_id in user_ids)
+        for emoji, user_ids in sorted(grouped.items(), key=lambda item: item[0])
     ]
 
 
-
-@router.post("/rooms/{room_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED,
-    summary="Send message",
-    description="Sending the message by REST API with deduplication",
-    responses={
-        201: {
-            "description": "Message created successfully",
-            "model": MessageResponse
-        },
-        409: {
-            "description": "Nonce conflict (duplicate at enforce_nonce=true)",
-            "content": {
-                "application/json": {
-                    "example": {"detail": "nonce conflict"}
-                }
-            }
-        },
-        400: {
-            "description": "Validation error",
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "empty_user_id": {
-                            "summary": "user_id is empty",
-                            "value": {"detail": [{"type": "value_error", "msg": "user_id cannot be empty"}]}
-                        },
-                        "long_body": {
-                            "summary": "The message is too long",
-                            "value": {"detail": [{"type": "value_error", "msg": "body must be 4096 characters or less"}]}
-                        },
-                        "enforce_without_nonce": {
-                            "summary": "enforce_nonce without nonce",
-                            "value": {"detail": [{"type": "value_error", "msg": "enforce_nonce requires nonce to be set"}]}
-                        }
-                    }
-                }
-            }
-        }
-    }
-)
-async def post_message(
-    room_id: int,
-    payload: MessageCreate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-    redis: Redis = Depends(get_redis)
-):
-    """
-    Sending a message to a room.
-
-    Request Body:
-        MessageCreate: Validation message
-
-    Validation:
-        - user_id: 1-32 characters, not empty
-        - body: 1-4096 characters, not empty
-        - nonce: optional, 1-25 characters or NONE
-        - enforce_nonce: Requires the presence of a nonce
-    """
-    msg = await create_message_with_nonce(
-        db=db,
-        room_id=room_id,
-        user_id=current_user.id,
-        payload=payload,
-        redis=redis,
-        attachments_data=payload.attachments  # Передаём вложения
+def build_reply_preview(msg: Message) -> MessageReplyPreview | None:
+    if not msg.reply_to:
+        return None
+    reply_user = msg.reply_to.user
+    return MessageReplyPreview(
+        id=msg.reply_to.id,
+        body=msg.reply_to.body,
+        user=MessageUserResponse(
+            id=reply_user.id if reply_user else 0,
+            username=reply_user.username if reply_user else "Unknown",
+            display_name=reply_user.display_name if reply_user else "Unknown User",
+            avatar_url=reply_user.avatar_url if reply_user else None,
+        ),
     )
 
-    return MessageResponse (
+
+def serialize_message(msg: Message, current_user: User) -> MessageResponse:
+    return MessageResponse(
         id=msg.id,
         room_id=msg.room_id,
         nonce=msg.nonce,
@@ -198,12 +61,11 @@ async def post_message(
         created_at=msg.created_at.isoformat(),
         edited_at=msg.edited_at.isoformat() if msg.edited_at else None,
         user=MessageUserResponse(
-            id=current_user.id,
-            username=current_user.username,
-            display_name=current_user.display_name,
-            avatar_url=current_user.avatar_url
+            id=msg.user.id if msg.user else 0,
+            username=msg.user.username if msg.user else "Unknown",
+            display_name=msg.user.display_name if msg.user else "Unknown User",
+            avatar_url=msg.user.avatar_url if msg.user else None,
         ),
-        # ... existing fields ...
         attachments=[
             AttachmentResponse(
                 id=att.id,
@@ -216,4 +78,161 @@ async def post_message(
             )
             for att in (msg.attachments or [])
         ],
+        reactions=build_reactions_payload(msg.reactions or [], current_user.id),
+        reply_to=build_reply_preview(msg),
+        is_deleted=msg.deleted_at is not None,
     )
+
+
+@router.post("/rooms", dependencies=[Depends(require_admin)], response_model=RoomResponse, status_code=201)
+async def create_room(
+    payload: RoomCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    room = Room(title=payload.title, created_by=current_user.id)
+    db.add(room)
+    await db.commit()
+    await db.refresh(room)
+    return {"id": room.id, "title": room.title}
+
+
+@router.get("/rooms/{room_id}/messages", response_model=list[MessageResponse])
+async def list_messages(
+    room_id: int,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    stmt = (
+        select(Message)
+        .where(Message.room_id == room_id)
+        .options(
+            joinedload(Message.user),
+            selectinload(Message.attachments),
+            selectinload(Message.reactions),
+            joinedload(Message.reply_to).joinedload(Message.user),
+        )
+        .order_by(Message.id.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    messages = list(reversed(result.scalars().all()))
+    return [serialize_message(msg, current_user) for msg in messages]
+
+
+@router.post("/rooms/{room_id}/messages/{message_id}/reactions", status_code=status.HTTP_200_OK)
+async def toggle_reaction(
+    room_id: int,
+    message_id: int,
+    payload: ReactionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+):
+    emoji = payload.emoji.strip()
+    message_stmt = select(Message).where(Message.id == message_id, Message.room_id == room_id)
+    message = (await db.execute(message_stmt)).scalar_one_or_none()
+    if not message:
+        raise HTTPException(status_code=404, detail="message not found")
+
+    existing_stmt = select(MessageReaction).where(
+        MessageReaction.message_id == message_id,
+        MessageReaction.user_id == current_user.id,
+        MessageReaction.emoji == emoji,
+    )
+    existing = (await db.execute(existing_stmt)).scalar_one_or_none()
+
+    action = "added"
+    if existing:
+        await db.delete(existing)
+        action = "removed"
+    else:
+        db.add(MessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji))
+
+    await db.commit()
+
+    refreshed = (
+        await db.execute(select(Message).where(Message.id == message_id).options(selectinload(Message.reactions)))
+    ).scalar_one()
+    reaction_event = {
+        "type": "reaction",
+        "room_id": room_id,
+        "message_id": message_id,
+        "emoji": emoji,
+        "action": action,
+        "actor_user_id": current_user.id,
+        "reactions": [r.model_dump() for r in build_reactions_payload(refreshed.reactions or [], current_user.id)],
+    }
+    if redis:
+        try:
+            await redis.publish(f"room:{room_id}", json.dumps(reaction_event))
+        except Exception:
+            pass
+    return reaction_event
+
+
+@router.delete("/rooms/{room_id}/messages/{message_id}", status_code=status.HTTP_200_OK)
+async def delete_message(
+    room_id: int,
+    message_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+):
+    msg_stmt = select(Message).where(Message.id == message_id, Message.room_id == room_id)
+    msg = (await db.execute(msg_stmt)).scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=404, detail="message not found")
+    if msg.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="can delete only own message")
+
+    from datetime import datetime, timezone
+    msg.body = "Сообщение удалено"
+    msg.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    event = {
+        "type": "message_deleted",
+        "room_id": room_id,
+        "message_id": message_id,
+        "body": msg.body,
+        "deleted_at": msg.deleted_at.isoformat() if msg.deleted_at else None,
+    }
+    if redis:
+        try:
+            await redis.publish(f"room:{room_id}", json.dumps(event))
+        except Exception:
+            pass
+    return event
+
+
+@router.post("/rooms/{room_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+async def post_message(
+    room_id: int,
+    payload: MessageCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    redis: Redis = Depends(get_redis),
+):
+    msg = await create_message_with_nonce(
+        db=db,
+        room_id=room_id,
+        user_id=current_user.id,
+        payload=payload,
+        redis=redis,
+        attachments_data=payload.attachments,
+    )
+    refreshed = (
+        await db.execute(
+            select(Message)
+            .where(Message.id == msg.id)
+            .options(
+                joinedload(Message.user),
+                selectinload(Message.attachments),
+                selectinload(Message.reactions),
+                joinedload(Message.reply_to).joinedload(Message.user),
+            )
+        )
+    ).scalar_one()
+    return serialize_message(refreshed, current_user)

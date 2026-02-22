@@ -3,7 +3,7 @@ Pydantic schemes for working with chat messages.
 """
 from pydantic import BaseModel, field_validator, model_validator
 
-# User nested in message
+
 class MessageUserResponse(BaseModel):
     id: int
     username: str
@@ -13,19 +13,17 @@ class MessageUserResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# Message create
+
 class MessageCreate(BaseModel):
-    body: str = ""  # Default empty, can be just attachments
+    body: str = ""
     nonce: str | int | None = None
     enforce_nonce: bool = False
-    attachments: list[dict] | None = None  # Список вложений [{"filename": "...", "file_path": "...", "file_size": ..., "mime_type": "..."}]
+    attachments: list[dict] | None = None
+    reply_to_id: int | None = None
 
     @field_validator("body")
     @classmethod
     def validate_body(cls, v: str) -> str:
-        """
-        Limit: 0-4096 characters. Empty allowed if attachments present.
-        """
         if v is None:
             return ""
         v = v.strip()
@@ -35,9 +33,6 @@ class MessageCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_body_or_attachments(self):
-        """
-        Either body or attachments must be present.
-        """
         has_body = self.body and self.body.strip()
         has_attachments = self.attachments and len(self.attachments) > 0
         if not has_body and not has_attachments:
@@ -47,9 +42,6 @@ class MessageCreate(BaseModel):
     @field_validator("nonce")
     @classmethod
     def validate_nonce(cls, v: str | int | None) -> str | None:
-        """
-        Nonce validation, optional 25 characters.
-        """
         if v is None:
             return None
 
@@ -62,18 +54,12 @@ class MessageCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_enforce_nonce(self):
-        """
-        If enforce_nonce is True, nonce is required.
-        """
         if self.enforce_nonce and not self.nonce:
             raise ValueError("enforce_nonce requires nonce to be set")
         return self
 
 
-# for future, currently not in use
-# Attachment
 class AttachmentResponse(BaseModel):
-    """Вложение к сообщению."""
     id: int
     message_id: int
     filename: str
@@ -85,28 +71,48 @@ class AttachmentResponse(BaseModel):
     class Config:
         from_attributes = True
 
-# Message response
+
+class ReactionCreate(BaseModel):
+    emoji: str
+
+    @field_validator("emoji")
+    @classmethod
+    def validate_emoji(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v or len(v) > 16:
+            raise ValueError("emoji must be 1-16 characters")
+        return v
+
+
+class ReactionResponse(BaseModel):
+    emoji: str
+    count: int
+    reacted_by_me: bool = False
+
+
+class MessageReplyPreview(BaseModel):
+    id: int
+    body: str
+    user: MessageUserResponse
+
+
 class MessageResponse(BaseModel):
-    """
-    Response schema with user object when creating/receiving a message.
-    The user object is populated via a JOIN with the users table.
-    - GET /rooms/{id}/messages
-    - WebSocket messages
-    """
     id: int
     room_id: int
     nonce: str | None
     body: str
-    created_at: str  # ISO 8601
+    created_at: str
     edited_at: str | None
     attachments: list[AttachmentResponse] = []
-
-    user: MessageUserResponse # user object
+    reactions: list[ReactionResponse] = []
+    reply_to: MessageReplyPreview | None = None
+    is_deleted: bool = False
+    user: MessageUserResponse
 
     class Config:
         from_attributes = True
 
+
 class MessageWithAttachmentsResponse(MessageResponse):
     attachments: list[AttachmentResponse] = []
-    reply_to: MessageResponse | None = None
     mentions: list[MessageUserResponse] = []
