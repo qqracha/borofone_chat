@@ -14,3 +14,10 @@
 /not_tested
 /uploads/attachments
 /docs
+
+# SSL certificates - DO NOT COMMIT
+/ssl/
+*.pem
+*.pfx
+*.crt
+*.key

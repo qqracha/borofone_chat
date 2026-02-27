@@ -258,6 +258,70 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+/**
+ * Обработчик вставки из буфера обмена (Ctrl+V).
+ * Поддерживает изображения и файлы из буфера обмена.
+ */
+function handlePaste(event) {
+    const clipboardData = event.clipboardData || window.clipboardData;
+    if (!clipboardData) return;
+    
+    const items = clipboardData.items;
+    if (!items) return;
+    
+    const files = [];
+    
+    // Перебираем элементы буфера обмена
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        
+        // Проверяем, является ли элемент файлом
+        if (item.kind === 'file') {
+            const file = item.getAsFile();
+            if (file) {
+                // Генерируем имя файла если его нет (например, для скриншотов)
+                if (!file.name || file.name === 'image.png') {
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    const extension = file.type.split('/')[1] || 'png';
+                    const newName = `clipboard-${timestamp}.${extension}`;
+                    
+                    // Создаём новый File объект с правильным именем
+                    const namedFile = new File([file], newName, { type: file.type });
+                    files.push(namedFile);
+                } else {
+                    files.push(file);
+                }
+            }
+        }
+    }
+    
+    if (files.length > 0) {
+        // Предотвращаем вставку как текст
+        event.preventDefault();
+        
+        // Добавляем файлы через существующую функцию
+        addAttachments(files);
+        
+        // Фокусируемся на поле ввода для удобства
+        const messageInput = document.getElementById('messageInput');
+        if (messageInput) {
+            messageInput.focus();
+        }
+    }
+}
+
+/**
+ * Инициализация обработчика вставки.
+ * Вызывается при загрузке страницы.
+ */
+function initPasteHandler() {
+    // Слушаем paste на всём документе
+    document.addEventListener('paste', handlePaste);
+}
+
+// Инициализируем при загрузке скрипта
+initPasteHandler();
+
 // Экспорт для использования в main.js
 window.attachments = {
     openAttachmentDialog,

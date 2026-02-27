@@ -64,6 +64,7 @@
     overflow: hidden;
     display: inline-block;
     vertical-align: top;
+    width: fit-content;
 }
 
 .attachment-image img {

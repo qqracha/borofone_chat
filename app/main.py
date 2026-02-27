@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,13 +14,33 @@ from app.api.http import router as http_router
 from app.api.ws import router as ws_router
 from app.api.auth import router as auth_router
 from app.api.admin import router as admin_router
-from app.api import auth, http, ws, rooms, attachments, voice_rooms
+from app.api import auth, http, ws, rooms, attachments, voice_rooms, wordle
 
+# Base allowed origins
 ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
     "https://borofone-chat.loca.lt",
+    # HTTPS local development
+    "https://localhost:443",
+    "https://localhost",
+    "https://127.0.0.1:443",
+    "https://127.0.0.1",
 ]
+
+# Add Radmin VPN IP if configured
+RADMIN_IP = os.getenv("RADMIN_IP", "26.150.183.241")
+if RADMIN_IP:
+    ALLOWED_ORIGINS.extend([
+        f"https://{RADMIN_IP}",
+        f"https://{RADMIN_IP}:443",
+        f"http://{RADMIN_IP}:8000",  # Fallback for HTTP
+    ])
+
+# Add custom origins from environment variable
+CUSTOM_ORIGINS = os.getenv("ALLOWED_ORIGINS", "")
+if CUSTOM_ORIGINS:
+    ALLOWED_ORIGINS.extend([origin.strip() for origin in CUSTOM_ORIGINS.split(",") if origin.strip()])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,6 +80,7 @@ app.include_router(admin_router)  # /admin/invites/*
 app.include_router(rooms.router)
 app.include_router(attachments.router)
 app.include_router(voice_rooms.router)
+app.include_router(wordle.router)
 
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.mount("/", StaticFiles(directory="pages", html=True), name="pages")
