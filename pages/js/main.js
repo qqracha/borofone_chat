@@ -1646,14 +1646,24 @@ async function logout() {
 
 messageForm.addEventListener('submit', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     sendMessage();
 });
+
+// Предотвращаем любой default для кнопки отправки
+if (sendBtn) {
+    sendBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+}
 
 // Shift+Enter for line break (like Discord)
 messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault(); // Prevent form submit
-        messageForm.dispatchEvent(new Event('submit', { bubbles: true }));
+        e.stopPropagation(); // Дополнительная защита
+        sendMessage(); // Вызываем напрямую, без dispatchEvent
     }
     // Shift+Enter - let default behavior (newline) happen automatically for textarea
 });
