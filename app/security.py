@@ -54,8 +54,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 # Секретный ключ для подписи JWT (должен быть в .env)
 SECRET_KEY = settings.jwt_secret_key
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60  # TTL для безопасности
-REFRESH_TOKEN_EXPIRE_DAYS = 7  # Более долгий для refresh токенов
+ACCESS_TOKEN_EXPIRE_DAYS = 30  # 30 days for persistent login
+REFRESH_TOKEN_EXPIRE_DAYS = 30  # Same as access token for simplicity
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -64,7 +64,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
     Args:
         data: Данные для включения в токен (обычно {"sub": user_id})
-        expires_delta: Время жизни токена (по умолчанию 15 минут)
+        expires_delta: Время жизни токена (по умолчанию 30 дней)
 
     Returns:
         JWT токен строкой
@@ -77,7 +77,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     if expires_delta:
         expire = now_utc + expires_delta
     else:
-        expire = now_utc + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = now_utc + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
 
     to_encode.update({
         "exp": expire,

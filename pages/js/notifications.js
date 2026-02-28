@@ -9,7 +9,45 @@
  * - playNotificationSound() - воспроизведение звука при новом сообщении
  * - Хранение последнего прочитанного сообщения в localStorage
  * - Подсчёт и отображение непрочитанных сообщений (badge)
+ * - Переключение режима "Не беспокоить" (DND)
  */
+
+// ── Do Not Disturb (DND) Mode ─────────────────────────────────────────
+const DND_STORAGE_KEY = 'doNotDisturb';
+
+/**
+ * Получить состояние режима "Не беспокоить".
+ * @returns {boolean} true если режим DND включён
+ */
+function isDoNotDisturbEnabled() {
+    try {
+        return localStorage.getItem(DND_STORAGE_KEY) === 'true';
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Установить состояние режима "Не беспокоить".
+ * @param {boolean} enabled - включить или выключить режим
+ */
+function setDoNotDisturb(enabled) {
+    try {
+        localStorage.setItem(DND_STORAGE_KEY, enabled ? 'true' : 'false');
+    } catch (err) {
+        console.warn('[Notifications] Failed to save DND state:', err);
+    }
+}
+
+/**
+ * Переключить режим "Не беспокоить".
+ * @returns {boolean} новое состояние режима
+ */
+function toggleDoNotDisturb() {
+    const newState = !isDoNotDisturbEnabled();
+    setDoNotDisturb(newState);
+    return newState;
+}
 
 // ── Audio Context ─────────────────────────────────────────────────
 let notificationAudio = null;
@@ -29,6 +67,11 @@ function getNotificationAudio() {
  * Использует mp3 файл из /sounds/notification.mp3
  */
 function playNotificationSound() {
+    // Не воспроизводить звук если включён режим "Не беспокоить"
+    if (isDoNotDisturbEnabled()) {
+        return;
+    }
+    
     try {
         const audio = getNotificationAudio();
         audio.currentTime = 0; // сброс на начало если уже играет
@@ -140,4 +183,7 @@ window.notifications = {
     countUnreadMessages,
     markRoomAsRead,
     updateRoomBadge,
+    isDoNotDisturbEnabled,
+    setDoNotDisturb,
+    toggleDoNotDisturb,
 };

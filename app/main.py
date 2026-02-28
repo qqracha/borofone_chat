@@ -1,8 +1,9 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
+from typing import Callable
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
@@ -67,6 +68,18 @@ app.add_middleware(
     allow_headers = ["*"],
     expose_headers = ["Set-Cookie"],
 )
+
+# Middleware to add Cross-Origin headers for Godot game (COOP/COEP)
+@app.middleware("http")
+async def add_cross_origin_headers(request: Request, call_next: Callable):
+    response: Response = await call_next(request)
+    
+    # Add COOP and COEP headers for game files
+    if request.url.path.startswith("/games/"):
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    
+    return response
 
 @app.get("/")
 async def root():

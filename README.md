@@ -278,7 +278,7 @@ RADMIN_IP=твой_новый_ip
 
 ```bash
 mkcert -install
-mkcert 26.150.183.241 localhost
+mkcert "yourip" localhost
 ```
 
 Это создаст сертификаты, которые будут автоматически доверяться браузером.

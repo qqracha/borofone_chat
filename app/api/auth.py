@@ -40,8 +40,8 @@ ALLOWED_AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_AVATAR_BYTES = 3 * 1024 * 1024
 
 # Cookie settings
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_EXPIRE_DAYS = 30
+REFRESH_TOKEN_EXPIRE_DAYS = 30
 
 # for prod & https Secure=True
 COOKIE_SECURE = False
@@ -55,7 +55,7 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
         httponly=True,
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60, # seconds
+        max_age=ACCESS_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, # seconds
         path="/",  # Важно: cookie доступна для всех путей
     )
 
@@ -66,7 +66,7 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
         httponly=True,
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
-        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, # second too
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60, # seconds
         path="/",  # Важно: cookie доступна для всех путей
 )
 

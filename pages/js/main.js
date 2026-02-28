@@ -15,6 +15,68 @@ function getWsUrl() {
 }
 
 // ==========================================
+// LOADING SCREEN
+// ==========================================
+
+let loadingTasks = [];
+let loadingCompleted = 0;
+const loadingOverlay = document.getElementById('loadingOverlay');
+const loadingProgressBar = document.getElementById('loadingProgressBar');
+const loadingStatus = document.getElementById('loadingStatus');
+
+function updateLoadingProgress(status, progress = null) {
+    if (loadingStatus) {
+        loadingStatus.textContent = status;
+    }
+    if (progress !== null && loadingProgressBar) {
+        loadingProgressBar.style.width = progress + '%';
+    }
+}
+
+function addLoadingTask(name) {
+    loadingTasks.push(name);
+    updateLoadingProgress(name, Math.round((loadingCompleted / (loadingTasks.length + 1)) * 100));
+}
+
+function completeLoadingTask(name) {
+    loadingCompleted++;
+    const progress = Math.round((loadingCompleted / loadingTasks.length) * 100);
+    updateLoadingProgress('Загрузка завершена', progress);
+}
+
+function hideLoadingScreen() {
+    if (loadingOverlay) {
+        updateLoadingProgress('Добро пожаловать!', 100);
+        // Ждём немного, чтобы пользователь увидел 100% загрузку
+        setTimeout(() => {
+            loadingOverlay.classList.add('hidden');
+            setTimeout(() => {
+                if (loadingOverlay.parentNode) {
+                    loadingOverlay.parentNode.removeChild(loadingOverlay);
+                }
+            }, 700);
+        }, 600);
+    }
+}
+
+// Инициализация экрана загрузки
+function initLoadingScreen() {
+    // Добавляем задачи загрузки
+    addLoadingTask('Загрузка стилей');
+    addLoadingTask('Загрузка конфигурации');
+    addLoadingTask('Загрузка интерфейса');
+    addLoadingTask('Подключение к серверу');
+    
+    // Скрываем экран загрузки при ошибке window.onerror
+    window.onerror = function(msg, url, lineNo, columnNo, error) {
+        console.error('Ошибка:', msg, 'на строке', lineNo);
+        completeLoadingTask('Ошибка загрузки');
+        hideLoadingScreen();
+        return false;
+    };
+}
+
+// ==========================================
 // STATE
 // ==========================================
 
@@ -62,6 +124,20 @@ let headphonesGainValue = 1;
 let micAudioContext = null;
 let micGainNode = null;
 let processedOutboundStream = null;
+
+// ==========================================
+// RATE LIMITING (Discord-like)
+// ==========================================
+
+const RATE_LIMIT_WINDOW_MS = 2000;    // 5 seconds window to detect rapid messages
+const RATE_LIMIT_WARNING_THRESHOLD = 5;  // 3 messages in window triggers warning
+const RATE_LIMIT_TIMEOUT_MS = 5000;     // 10 second timeout after exceeding limit
+
+let messageTimestamps = [];  // Array of timestamps for recent messages
+let isRateLimited = false;   // Whether user is currently rate limited
+let rateLimitTimeout = null; // Timer for auto-clearing rate limit
+let rateLimitWarningEl = null;  // Warning message DOM element
+
 // ==========================================
 // DOM ELEMENTS
 // ==========================================
@@ -73,6 +149,7 @@ const messagesContainer = document.getElementById('messagesContainer');
 const messageInput = document.getElementById('messageInput');
 const messageForm = document.getElementById('messageForm');
 const sendBtn = document.getElementById('sendBtn');
+const markdownPopup = document.getElementById('markdownPopup');
 const connectionStatus = document.getElementById('connectionStatus');
 const createRoomBtn = document.getElementById('createRoomBtn');
 const createRoomModal = document.getElementById('createRoomModal');
@@ -82,10 +159,20 @@ const roomTypeInput = document.getElementById('roomTypeInput');
 const closeModalBtn = document.getElementById('closeModalBtn');
 const cancelModalBtn = document.getElementById('cancelModalBtn');
 const settingsBtn = document.getElementById('settingsBtn');
+const activitiesBtn = document.getElementById('activitiesBtn');
+const activitiesModal = document.getElementById('activitiesModal');
+const activitiesOverlay = document.getElementById('activitiesOverlay');
+const activitiesCloseBtn = document.getElementById('activitiesCloseBtn');
+const gameFrame = document.getElementById('gameFrame');
+const activitiesPlaceholder = document.getElementById('activitiesPlaceholder');
+const launchGameBtn = document.getElementById('launchGameBtn');
+const openNewTabBtn = document.getElementById('openNewTabBtn');
+const dndBtn = document.getElementById('dndBtn');
 const settingsModal = document.getElementById('settingsModal');
 const settingsForm = document.getElementById('settingsForm');
 const closeSettingsBtn = document.getElementById('closeSettingsBtn');
 const cancelSettingsBtn = document.getElementById('cancelSettingsBtn');
+const logoutBtn = document.getElementById('logoutBtn');
 const settingsDisplayName = document.getElementById('settingsDisplayName');
 const settingsUsername = document.getElementById('settingsUsername');
 const avatarInput = document.getElementById('avatarInput');
@@ -101,6 +188,10 @@ const toggleDeafenBtn = document.getElementById('toggleDeafenBtn');
 const leaveVoiceBtn = document.getElementById('leaveVoiceBtn');
 const voiceRoomState = document.getElementById('voiceRoomState');
 const voiceParticipantsGrid = document.getElementById('voiceParticipantsGrid');
+const voiceCollapsedParticipants = document.getElementById('voiceCollapsedParticipants');
+const collapseVoiceBtn = document.getElementById('collapseVoiceBtn');
+const collapseIcon = document.getElementById('collapseIcon');
+const voiceOverlay = document.getElementById('voiceOverlay');
 const voiceControls = document.getElementById('voiceControls');
 const localAudioControls = document.getElementById('localAudioControls');
 const micVolumeSlider = document.getElementById('micVolumeSlider');
@@ -109,6 +200,49 @@ const micVolumeValue = document.getElementById('micVolumeValue');
 const headphoneVolumeValue = document.getElementById('headphoneVolumeValue');
 
 const replyPreview = document.createElement('div');
+
+// ==========================================
+// THEME MANAGEMENT
+// ==========================================
+
+function getStoredTheme() {
+    return localStorage.getItem('chatTheme') || 'standard';
+}
+
+function applyTheme(theme) {
+    if (theme === 'standard') {
+        document.documentElement.removeAttribute('data-theme');
+    } else {
+        document.documentElement.setAttribute('data-theme', theme);
+    }
+}
+
+function updateThemeUI(activeTheme) {
+    const themeOptions = document.querySelectorAll('.theme-option');
+    themeOptions.forEach(option => {
+        if (option.dataset.theme === activeTheme) {
+            option.classList.add('active');
+        } else {
+            option.classList.remove('active');
+        }
+    });
+}
+
+function initTheme() {
+    const savedTheme = getStoredTheme();
+    applyTheme(savedTheme);
+    updateThemeUI(savedTheme);
+}
+
+// Theme option click handlers
+document.querySelectorAll('.theme-option').forEach(option => {
+    option.addEventListener('click', () => {
+        const theme = option.dataset.theme;
+        localStorage.setItem('chatTheme', theme);
+        applyTheme(theme);
+        updateThemeUI(theme);
+    });
+});
 replyPreview.className = 'reply-preview hidden';
 replyPreview.innerHTML = '<div class="reply-preview-content"></div><button class="reply-preview-close" type="button">✕</button>';
 messageForm.parentElement.insertBefore(replyPreview, messageForm);
@@ -450,7 +584,7 @@ function addMessage(msg, animate = false) {
     // Скрываем текст если пустой и есть вложения
     const isDeleted = Boolean(msg.is_deleted);
     messageEl.dataset.isDeleted = isDeleted ? '1' : '0';
-    const bodyText = msg.body ? escapeHtml(msg.body) : '';
+    const bodyText = msg.body ? parseMarkdown(escapeHtml(msg.body)) : '';
     const bodyHtml = bodyText ? `<div class="message-text${isDeleted ? ' message-text--deleted' : ''}">${bodyText}</div>` : '';
 
     const reactionsHtml = renderReactions(msg.reactions || []);
@@ -544,7 +678,7 @@ function renderReplyPreview(replyTo) {
     const user = replyTo.user?.display_name || replyTo.user?.username || 'Unknown';
     const body = (replyTo.body || '').trim();
     const shortBody = body.length > 120 ? `${body.slice(0, 120)}...` : body;
-    return `<button class="message-reply" data-jump-to-message="${replyTo.id}" type="button">↩ <strong>${escapeHtml(user)}</strong>: ${escapeHtml(shortBody || '[вложение]')}</button>`;
+    return `<button class="message-reply" data-jump-to-message="${replyTo.id}" type="button">↩ <strong>${escapeHtml(user)}</strong>: ${parseMarkdown(escapeHtml(shortBody || '[вложение]'))}</button>`;
 }
 
 function jumpToMessage(messageId) {
@@ -975,7 +1109,172 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * Parse markdown syntax to HTML
+ * NOTE: This function should be called AFTER escapeHtml to prevent XSS
+ * Supports: bold, italic, strikethrough, inline code, code blocks, links, headers, lists, blockquotes
+ */
+function parseMarkdown(text) {
+    if (!text) return '';
+    
+    let html = text;
+    
+    // Code blocks (```code```) - must be first to avoid conflicts
+    html = html.replace(/```([\s\S]*?)```/g, '<pre class="md-code-block"><code>$1</code></pre>');
+    
+    // Inline code (`code`)
+    html = html.replace(/`([^`]+)`/g, '<code class="md-code-inline">$1</code>');
+    
+    // Strikethrough (~~text~~)
+    html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+    
+    // Bold (**text** or __text__)
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+    
+    // Italic (*text* or _text_)
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    html = html.replace(/_([^_]+)_/g, '<em>$1</em>');
+    
+    // Headers (### H3, ## H2, # H1)
+    html = html.replace(/^### (.+)$/gm, '<h4 class="md-h4">$1</h4>');
+    html = html.replace(/^## (.+)$/gm, '<h3 class="md-h3">$1</h3>');
+    html = html.replace(/^# (.+)$/gm, '<h2 class="md-h2">$1</h2>');
+    
+    // Blockquotes (> quote)
+    html = html.replace(/^&gt; (.+)$/gm, '<blockquote class="md-blockquote">$1</blockquote>');
+    
+    // Unordered lists (- item or * item)
+    html = html.replace(/^[*-] (.+)$/gm, '<li class="md-li">$1</li>');
+    
+    // Links [text](url)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="md-link" target="_blank" rel="noopener noreferrer">$1</a>');
+    
+    // Convert line breaks to <br>
+    html = html.replace(/\n/g, '<br>');
+    
+    return html;
+}
+
+// ==========================================
+// RATE LIMITING FUNCTIONS
+// ==========================================
+
+function createRateLimitWarning() {
+    if (rateLimitWarningEl) return rateLimitWarningEl;
+    
+    rateLimitWarningEl = document.createElement('div');
+    rateLimitWarningEl.id = 'rateLimitWarning';
+    rateLimitWarningEl.className = 'rate-limit-warning';
+    rateLimitWarningEl.style.cssText = `
+        position: fixed;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: linear-gradient(135deg, #da373c 0%, #c42d31 100%);
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-family: 'Whitney', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        font-weight: 600;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        z-index: 10000;
+        display: none;
+        text-align: center;
+        animation: slideUp 0.3s ease-out;
+    `;
+    
+    // Add animation keyframes
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+    `;
+    document.head.appendChild(style);
+    
+    document.body.appendChild(rateLimitWarningEl);
+    return rateLimitWarningEl;
+}
+
+function showRateLimitWarning(message, isTimeout = false) {
+    const warning = createRateLimitWarning();
+    warning.textContent = message;
+    warning.style.display = 'block';
+    
+    if (isTimeout) {
+        warning.style.background = 'linear-gradient(135deg, #4f545c 0%, #36393f 100%)';
+    }
+}
+
+function hideRateLimitWarning() {
+    if (rateLimitWarningEl) {
+        rateLimitWarningEl.style.display = 'none';
+    }
+}
+
+function checkRateLimit() {
+    const now = Date.now();
+    
+    // If already rate limited, check if timeout has passed
+    if (isRateLimited) {
+        const remainingTime = Math.ceil((messageTimestamps[0] + RATE_LIMIT_TIMEOUT_MS - now) / 1000);
+        if (remainingTime > 0) {
+            showRateLimitWarning(`Слишком много сообщений! Попробуйте через ${remainingTime} сек.`, true);
+            return false;
+        } else {
+            // Timeout expired, reset rate limit
+            isRateLimited = false;
+            messageTimestamps = [];
+            hideRateLimitWarning();
+        }
+    }
+    
+    // Clean old timestamps outside the window
+    messageTimestamps = messageTimestamps.filter(ts => now - ts < RATE_LIMIT_WINDOW_MS);
+    
+    // Add current timestamp
+    messageTimestamps.push(now);
+    
+    // Check if we've exceeded the warning threshold
+    if (messageTimestamps.length > RATE_LIMIT_WARNING_THRESHOLD) {
+        // Trigger rate limit - 10 second timeout
+        isRateLimited = true;
+        messageTimestamps = [now]; // Keep only current timestamp for timeout calculation
+        
+        showRateLimitWarning('Слишком много сообщений! Подождите 10 секунд.', true);
+        
+        // Auto-clear after timeout
+        if (rateLimitTimeout) clearTimeout(rateLimitTimeout);
+        rateLimitTimeout = setTimeout(() => {
+            isRateLimited = false;
+            messageTimestamps = [];
+            hideRateLimitWarning();
+        }, RATE_LIMIT_TIMEOUT_MS);
+        
+        return false;
+    } else if (messageTimestamps.length >= RATE_LIMIT_WARNING_THRESHOLD) {
+        // Show warning when approaching limit
+        const remaining = RATE_LIMIT_WARNING_THRESHOLD - messageTimestamps.length + 1;
+        showRateLimitWarning(`Не торопитесь! Отправьте чуть помедленнее. (${remaining} из ${RATE_LIMIT_WARNING_THRESHOLD})`);
+        
+        // Hide warning after 2 seconds
+        setTimeout(() => {
+            if (!isRateLimited) hideRateLimitWarning();
+        }, 2000);
+    }
+    
+    return true;
+}
+
 async function sendMessage() {
+    // Check rate limit before sending
+    if (!checkRateLimit()) {
+        return;
+    }
+    
     const text = messageInput.value.trim();
     const hasAttachments = window.attachments && window.attachments.getAttachmentsToSend().length > 0;
 
@@ -986,6 +1285,7 @@ async function sendMessage() {
 
     // Очищаем input сразу — UX не должен зависеть от сети
     messageInput.value = '';
+    autoResizeMessageInput();
 
     try {
         // Загружаем вложения если есть
@@ -1267,6 +1567,9 @@ function openSettingsModal() {
     settingsUsername.value = currentUser.username || '';
     avatarInput.value = '';
     updateSettingsAvatarPreview(normalizeAvatarUrl(currentUser.avatar_url));
+    
+    // Обновляем UI темы при открытии
+    updateThemeUI(getStoredTheme());
 
     settingsModal.classList.add('active');
 }
@@ -1319,6 +1622,24 @@ async function saveSettings() {
     }
 }
 
+async function logout() {
+    try {
+        const response = await fetch(`${getApiUrl()}/auth/logout`, {
+            method: 'POST',
+            credentials: 'include',
+        });
+
+        if (response.ok) {
+            window.location.href = './login.html';
+        } else {
+            alert('Не удалось выйти из аккаунта');
+        }
+    } catch (err) {
+        console.error('Logout failed:', err);
+        alert('Ошибка при выходе из аккаунта');
+    }
+}
+
 // ==========================================
 // EVENT LISTENERS
 // ==========================================
@@ -1326,6 +1647,148 @@ async function saveSettings() {
 messageForm.addEventListener('submit', (e) => {
     e.preventDefault();
     sendMessage();
+});
+
+// Shift+Enter for line break (like Discord)
+messageInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault(); // Prevent form submit
+        messageForm.dispatchEvent(new Event('submit', { bubbles: true }));
+    }
+    // Shift+Enter - let default behavior (newline) happen automatically for textarea
+});
+
+// Auto-resize textarea
+function autoResizeMessageInput() {
+    messageInput.style.height = 'auto';
+    messageInput.style.height = Math.min(messageInput.scrollHeight, 150) + 'px';
+}
+
+messageInput.addEventListener('input', () => {
+    autoResizeMessageInput();
+    // Update send button state
+    sendBtn.disabled = !messageInput.value.trim();
+    // Check for text selection (for popup)
+    checkTextSelection();
+});
+
+// Check for text selection to show popup
+function checkTextSelection() {
+    if (!markdownPopup || !messageInput) return;
+    const selectedText = messageInput.value.substring(messageInput.selectionStart, messageInput.selectionEnd);
+    if (selectedText.length > 0) {
+        // Show popup near cursor/selection
+        showMarkdownPopup();
+    } else {
+        hideMarkdownPopup();
+    }
+}
+
+// Also check on selection change
+messageInput.addEventListener('select', checkTextSelection);
+messageInput.addEventListener('click', checkTextSelection);
+messageInput.addEventListener('mouseup', checkTextSelection);
+messageInput.addEventListener('keyup', (e) => {
+    // Delay to allow selection to update
+    setTimeout(checkTextSelection, 10);
+});
+
+// Keyboard shortcuts for markdown
+messageInput.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+            case 'b':
+                e.preventDefault();
+                applyMarkdownFormat('bold');
+                break;
+            case 'i':
+                e.preventDefault();
+                applyMarkdownFormat('italic');
+                break;
+            case 's':
+                e.preventDefault();
+                applyMarkdownFormat('strikethrough');
+                break;
+        }
+    }
+});
+
+function showMarkdownPopup() {
+    if (!markdownPopup) return;
+    // Position popup near the input
+    const inputRect = messageInput.getBoundingClientRect();
+    markdownPopup.style.top = (inputRect.bottom + 8) + 'px';
+    markdownPopup.style.left = inputRect.left + 'px';
+    markdownPopup.classList.remove('hidden');
+}
+
+function hideMarkdownPopup() {
+    if (!markdownPopup) return;
+    markdownPopup.classList.add('hidden');
+}
+
+// Apply markdown formatting
+function applyMarkdownFormat(formatType) {
+    const start = messageInput.selectionStart;
+    const end = messageInput.selectionEnd;
+    const text = messageInput.value;
+    const selectedText = text.substring(start, end);
+    
+    let newText = '';
+    let cursorOffset = 0;
+    
+    switch (formatType) {
+        case 'bold':
+            newText = '**' + selectedText + '**';
+            cursorOffset = 2;
+            break;
+        case 'italic':
+            newText = '*' + selectedText + '*';
+            cursorOffset = 1;
+            break;
+        case 'strikethrough':
+            newText = '~~' + selectedText + '~~';
+            cursorOffset = 2;
+            break;
+        case 'code':
+            newText = '`' + selectedText + '`';
+            cursorOffset = 1;
+            break;
+        case 'link':
+            newText = '[' + selectedText + '](url)';
+            cursorOffset = selectedText.length + 3;
+            break;
+        default:
+            return;
+    }
+    
+    messageInput.value = text.substring(0, start) + newText + text.substring(end);
+    
+    // Set cursor position after the inserted text
+    const newCursorPos = selectedText.length > 0 ? end + cursorOffset : start + cursorOffset;
+    messageInput.selectionStart = messageInput.selectionEnd = newCursorPos;
+    
+    // Update preview and UI
+    autoResizeMessageInput();
+    updateMarkdownPreview();
+    sendBtn.disabled = !messageInput.value.trim();
+    messageInput.focus();
+}
+
+// Add popup button click handlers
+document.querySelectorAll('.md-popup-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const format = btn.dataset.mdFormat;
+        applyMarkdownFormat(format);
+    });
+});
+
+// Hide popup when clicking outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.markdown-popup') && !e.target.closest('#messageInput')) {
+        hideMarkdownPopup();
+    }
 });
 
 messagesList.addEventListener('click', (event) => {
@@ -1563,6 +2026,134 @@ createRoomModal.addEventListener('click', (e) => {
 });
 
 settingsBtn.addEventListener('click', openSettingsModal);
+
+// Activities (Game) Modal
+function openActivitiesModal() {
+    activitiesModal.classList.add('active');
+    // Reset to placeholder state
+    gameFrame.classList.remove('active');
+    activitiesPlaceholder.classList.remove('hidden');
+}
+
+function closeActivitiesModal() {
+    activitiesModal.classList.remove('active');
+    // Stop the game by clearing the iframe src
+    gameFrame.src = '';
+    gameFrame.classList.remove('active');
+    activitiesPlaceholder.classList.remove('hidden');
+}
+
+function launchGame() {
+    // Path to your game (Blackjack)
+    const gamePath = './games/blackjack.html';
+    
+    gameFrame.src = gamePath;
+    gameFrame.classList.add('active');
+    activitiesPlaceholder.classList.add('hidden');
+    
+    // Focus iframe after a short delay to let it load
+    setTimeout(() => {
+        gameFrame.focus();
+    }, 500);
+}
+
+// Click on game area to focus it
+document.querySelector('.activities-content').addEventListener('click', () => {
+    if (gameFrame.classList.contains('active')) {
+        gameFrame.focus();
+    }
+});
+
+// Event listeners for activities modal
+activitiesBtn.addEventListener('click', openActivitiesModal);
+activitiesCloseBtn.addEventListener('click', closeActivitiesModal);
+activitiesOverlay.addEventListener('click', closeActivitiesModal);
+launchGameBtn.addEventListener('click', launchGame);
+
+// Open game in new tab
+openNewTabBtn.addEventListener('click', () => {
+    window.open('./games/blackjack.html', '_blank');
+});
+
+// Close modal with Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && activitiesModal.classList.contains('active')) {
+        closeActivitiesModal();
+    }
+});
+
+// Forward keyboard events to game iframe when activities modal is open
+// Prevent chat from capturing game keys when activities modal is open
+document.addEventListener('keydown', (e) => {
+    // Only handle if activities modal is active
+    if (!activitiesModal.classList.contains('active')) return;
+    if (!gameFrame.classList.contains('active')) return;
+    
+    // Game keys to pass to game
+    const gameKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'];
+    
+    if (gameKeys.includes(e.code)) {
+        // Prevent chat input from capturing these keys
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Focus the iframe so it receives the keyboard input
+        gameFrame.focus();
+        
+        // Forward key to iframe using postMessage for cross-origin
+        try {
+            gameFrame.contentWindow.postMessage({
+                type: 'keydown',
+                key: e.key,
+                code: e.code
+            }, '*');
+        } catch(err) {
+            // Fallback - iframe should be focused
+        }
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (!activitiesModal.classList.contains('active')) return;
+    if (!gameFrame.classList.contains('active')) return;
+    
+    const gameKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'];
+    
+    if (gameKeys.includes(e.code)) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        try {
+            gameFrame.contentWindow.postMessage({
+                type: 'keyup',
+                key: e.key,
+                code: e.code
+            }, '*');
+        } catch(err) {}
+    }
+});
+
+// DND (Do Not Disturb) button
+function updateDndButtonState() {
+    const isDnd = window.notifications.isDoNotDisturbEnabled();
+    if (isDnd) {
+        dndBtn.classList.add('active');
+        dndBtn.title = 'Режим "Не беспокоить" включён';
+    } else {
+        dndBtn.classList.remove('active');
+        dndBtn.title = 'Включить режим "Не беспокоить"';
+    }
+}
+
+dndBtn.addEventListener('click', () => {
+    window.notifications.toggleDoNotDisturb();
+    updateDndButtonState();
+});
+
+// Initialize DND button state
+updateDndButtonState();
+
+logoutBtn.addEventListener('click', logout);
 
 closeSettingsBtn.addEventListener('click', closeSettingsModal);
 cancelSettingsBtn.addEventListener('click', closeSettingsModal);
@@ -1871,8 +2462,11 @@ function stopPolling() {
 function upsertVoiceParticipant(participant) {
     const copy = [...voiceParticipants];
     const idx = copy.findIndex(p => p.user_id === participant.user_id);
-    if (idx >= 0) copy[idx] = { ...copy[idx], ...participant };
-    else copy.push(participant);
+    if (idx >= 0) {
+        copy[idx] = { ...copy[idx], ...participant };
+    } else {
+        copy.push({ ...participant });
+    }
     return copy;
 }
 
@@ -1954,6 +2548,11 @@ function renderVoiceParticipantsGrid() {
     voiceParticipantsGrid.querySelectorAll('.voice-participant-card').forEach(card => {
         card.addEventListener('contextmenu', handleParticipantContextMenu);
     });
+    
+    // Update collapsed participants if overlay is collapsed
+    if (isVoiceOverlayCollapsed) {
+        updateCollapsedParticipants();
+    }
 }
 
 function handleParticipantContextMenu(event) {
@@ -2027,6 +2626,7 @@ function leaveVoiceRoom() {
     if (currentVoiceRoomId && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'leave_room', room_id: currentVoiceRoomId }));
     }
+    
     playVoiceEventSound('leave');
     peerConnections.forEach((_, uid) => closePeerConnection(uid));
     const leftRoomId = currentVoiceRoomId;
@@ -2185,6 +2785,35 @@ toggleMicBtn.addEventListener('click', () => setMute(!isMuted));
 toggleDeafenBtn.addEventListener('click', () => setDeafen(!isDeafened));
 leaveVoiceBtn.addEventListener('click', () => leaveVoiceRoom());
 
+// Voice overlay collapse functionality
+let isVoiceOverlayCollapsed = false;
+
+collapseVoiceBtn.addEventListener('click', () => {
+    isVoiceOverlayCollapsed = !isVoiceOverlayCollapsed;
+    voiceOverlay.classList.toggle('collapsed', isVoiceOverlayCollapsed);
+    collapseIcon.textContent = isVoiceOverlayCollapsed ? '▶' : '▼';
+    if (isVoiceOverlayCollapsed) {
+        updateCollapsedParticipants();
+    }
+});
+
+function updateCollapsedParticipants() {
+    if (!voiceCollapsedParticipants) return;
+    
+    const cards = voiceParticipantsGrid?.querySelectorAll('.voice-participant-card') || [];
+    voiceCollapsedParticipants.innerHTML = '';
+    
+    cards.forEach(card => {
+        const username = card.querySelector('.voice-participant-name')?.textContent || 'User';
+        const isSpeaking = card.classList.contains('speaking');
+        const initial = username.charAt(0).toUpperCase();
+        
+        const collapsedEl = document.createElement('div');
+        collapsedEl.className = `voice-collapsed-participant${isSpeaking ? ' speaking' : ''}`;
+        collapsedEl.innerHTML = `<span class="avatar">${initial}</span><span class="name">${username}</span>`;
+        voiceCollapsedParticipants.appendChild(collapsedEl);
+    });
+}
 
 if (micVolumeSlider) micVolumeSlider.value = String(Math.round(micGainValue * 100));
 if (headphoneVolumeSlider) headphoneVolumeSlider.value = String(Math.round(headphonesGainValue * 100));
@@ -2196,12 +2825,27 @@ if (headphoneVolumeValue) headphoneVolumeValue.textContent = `${Math.round(headp
 // ==========================================
 
 async function init() {
+    // Инициализируем тему
+    initTheme();
+    completeLoadingTask('Стили');
+    
     await loadCurrentUser();
+    completeLoadingTask('Конфигурация');
+    
     await loadRooms();
+    completeLoadingTask('Интерфейс');
+    
     await loadVoiceRooms();
-
+    
     // Подключаемся к глобальному WebSocket ОДИН РАЗ
     connectWebSocket();
+    completeLoadingTask('Подключение');
+    
+    // Скрываем экран загрузки
+    hideLoadingScreen();
 }
+
+// Инициализируем экран загрузки
+initLoadingScreen();
 
 init();

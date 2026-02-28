@@ -434,7 +434,6 @@ async def global_websocket_endpoint(
                     "room_id": room_id,
                     "participant": {"user_id": participant.user_id, "username": participant.username, "display_name": participant.display_name},
                 })
-                await broadcast_voice_presence(room_id)
             stop_event.set()
 
     # ── Task 2: send to client ────────────────────────────────────
