@@ -1341,6 +1341,49 @@ body {
 .icon-btn:hover svg {
     transform: scale(1.1);
 }
+/* Discord-like tooltip */
+.discord-tooltip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 12000;
+    background: #111214;
+    color: #f2f3f5;
+    font-size: 13px;
+    line-height: 1.2;
+    font-weight: 500;
+    padding: 8px 10px;
+    border-radius: 6px;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.34);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+    transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.discord-tooltip::after {
+    content: '';
+    position: absolute;
+    left: var(--discord-tooltip-arrow-left, 50%);
+    width: 8px;
+    height: 8px;
+    background: #111214;
+    transform: translateX(-50%) rotate(45deg);
+}
+
+.discord-tooltip[data-placement='top']::after {
+    bottom: -4px;
+}
+
+.discord-tooltip[data-placement='bottom']::after {
+    top: -4px;
+}
+
+.discord-tooltip.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
 
 /* Activities button specific animation */
 .activities-btn:hover svg {
