@@ -102,12 +102,97 @@ let connectionStats = {
     messagesReceived: 0,
     reconnects: 0,
     lastPingTime: null,
-    pingValue: null
+    pingValue: null,
+    logs: []
 };
+
+// Add log entry function
+function addLogEntry(type, message) {
+    const logEntry = {
+        type: type,
+        message: message,
+        timestamp: Date.now()
+    };
+    
+    connectionStats.logs.unshift(logEntry);
+    
+    // Keep only last 50 logs
+    if (connectionStats.logs.length > 50) {
+        connectionStats.logs.pop();
+    }
+    
+    // Update logs display if logs tab is visible
+    updateLogsDisplay();
+}
+
+// Update logs display in the Logs tab
+function updateLogsDisplay() {
+    const logsList = document.getElementById('logsList');
+    if (!logsList) return;
+    
+    if (connectionStats.logs.length === 0) {
+        logsList.innerHTML = '<div class="logs-empty">Пока нет записей</div>';
+        return;
+    }
+    
+    let html = '';
+    connectionStats.logs.forEach(log => {
+        const time = new Date(log.timestamp);
+        const timeStr = time.toLocaleTimeString('ru-RU', { 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit' 
+        });
+        
+        let iconSvg = '';
+        switch(log.type) {
+            case 'connect':
+                iconSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>';
+                break;
+            case 'disconnect':
+                iconSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';
+                break;
+            case 'reconnect':
+                iconSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>';
+                break;
+            case 'error':
+                iconSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
+                break;
+            default:
+                iconSvg = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle></svg>';
+        }
+        
+        html += `
+            <div class="log-entry">
+                <div class="log-entry-icon ${log.type}">${iconSvg}</div>
+                <div class="log-entry-content">
+                    <div class="log-entry-message">${escapeHtml(log.message)}</div>
+                    <div class="log-entry-time">${timeStr}</div>
+                </div>
+            </div>
+        `;
+    });
+    
+    logsList.innerHTML = html;
+}
+
+// Clear logs function
+function clearLogs() {
+    connectionStats.logs = [];
+    updateLogsDisplay();
+}
+
+// Escape HTML to prevent XSS
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 let currentUser = null;
 let rooms = [];
 let shouldRemoveAvatar = false;
+let avatarCacheBuster = null;
 let badgesInitialized = false;  // Флаг: badges загружены один раз
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '🔥', '🎉'];
 const REACTION_TRIGGER_EMOJIS = ['😀', '😎', '✨', '🎯', '🫶', '😺', '🤙', '🌈'];
@@ -156,6 +241,16 @@ let headphonesGainValue = 1;
 let micAudioContext = null;
 let micGainNode = null;
 let processedOutboundStream = null;
+
+let localScreenStream = null;
+let pendingScreenStream = null;
+let isScreenShareStopping = false;
+let activeScreenViewerUserId = null;
+const remoteScreenStreams = new Map();
+const remoteAudioStreams = new Map();
+const localScreenSenders = new Map();
+const popoutWindows = new Map();
+const peerRenegotiationLocks = new Set();
 
 // ==========================================
 // RATE LIMITING (Discord-like)
@@ -215,6 +310,11 @@ const settingsUsername = document.getElementById('settingsUsername');
 const avatarInput = document.getElementById('avatarInput');
 const removeAvatarBtn = document.getElementById('removeAvatarBtn');
 const settingsAvatarPreview = document.getElementById('settingsAvatarPreview');
+
+// Prevent browser-native validation from trying to focus hidden controls.
+if (settingsForm) {
+    settingsForm.noValidate = true;
+}
 
 // User profile popup elements
 const userProfilePopup = document.getElementById('userProfilePopup');
@@ -319,7 +419,10 @@ function showUserProfile(userId, clickEvent = null) {
         
         // Set avatar
         if (user.avatar_url) {
-            const avatarUrl = normalizeAvatarUrl(user.avatar_url);
+            const avatarUrl = withAvatarCacheBuster(
+        normalizeAvatarUrl(user.avatar_url),
+        user.id
+    );
             userProfileAvatar.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(user.display_name || user.username)}" class="user-profile-avatar-img">`;
         } else {
             const initial = (user.display_name || user.username)[0]?.toUpperCase() || 'U';
@@ -449,6 +552,7 @@ const voiceRoomsList = document.getElementById('voiceRoomsList');
 const createVoiceRoomBtn = document.getElementById('createVoiceRoomBtn');
 const toggleMicBtn = document.getElementById('toggleMicBtn');
 const toggleDeafenBtn = document.getElementById('toggleDeafenBtn');
+const toggleScreenShareBtn = document.getElementById('toggleScreenShareBtn');
 const leaveVoiceBtn = document.getElementById('leaveVoiceBtn');
 const voiceRoomState = document.getElementById('voiceRoomState');
 const voiceParticipantsGrid = document.getElementById('voiceParticipantsGrid');
@@ -457,11 +561,32 @@ const collapseVoiceBtn = document.getElementById('collapseVoiceBtn');
 const collapseIcon = document.getElementById('collapseIcon');
 const voiceOverlay = document.getElementById('voiceOverlay');
 const voiceControls = document.getElementById('voiceControls');
+const screenShareStage = document.getElementById('screenShareStage');
+const screenShareGrid = document.getElementById('screenShareGrid');
+const screenShareCount = document.getElementById('screenShareCount');
 const localAudioControls = document.getElementById('localAudioControls');
 const micVolumeSlider = document.getElementById('micVolumeSlider');
 const headphoneVolumeSlider = document.getElementById('headphoneVolumeSlider');
 const micVolumeValue = document.getElementById('micVolumeValue');
 const headphoneVolumeValue = document.getElementById('headphoneVolumeValue');
+
+const screenShareModal = document.getElementById('screenShareModal');
+const closeScreenShareModalBtn = document.getElementById('closeScreenShareModalBtn');
+const cancelScreenShareBtn = document.getElementById('cancelScreenShareBtn');
+const startScreenShareBtn = document.getElementById('startScreenShareBtn');
+const pickScreenSourceBtn = document.getElementById('pickScreenSourceBtn');
+const screenSharePreviewWrap = document.getElementById('screenSharePreviewWrap');
+const screenSharePreview = document.getElementById('screenSharePreview');
+const screenSharePreviewMeta = document.getElementById('screenSharePreviewMeta');
+const screenShareQuality = document.getElementById('screenShareQuality');
+const screenShareAudio = document.getElementById('screenShareAudio');
+
+const screenViewerModal = document.getElementById('screenViewerModal');
+const closeScreenViewerModalBtn = document.getElementById('closeScreenViewerModalBtn');
+const screenViewerVideo = document.getElementById('screenViewerVideo');
+const screenViewerTitle = document.getElementById('screenViewerTitle');
+const screenViewerPopoutBtn = document.getElementById('screenViewerPopoutBtn');
+const screenViewerPipBtn = document.getElementById('screenViewerPipBtn');
 
 // Settings modal tab elements
 const logoutConfirmModal = document.getElementById('logoutConfirmModal');
@@ -550,6 +675,7 @@ messageContextMenu.innerHTML = `
     <div class="context-divider"></div>
     <button type="button" class="context-main-action" data-context-action="reply">Ответить <span>↩</span></button>
     <button type="button" class="context-main-action hidden" data-context-action="delete">Удалить сообщение <span>🗑</span></button>
+    <button type="button" class="context-main-action context-action-admin hidden" data-context-action="delete_hard">Удалить полностью <span>💣</span></button>
 `;
 document.body.appendChild(messageContextMenu);
 
@@ -868,7 +994,10 @@ function addMessage(msg, animate = false) {
     const author = msg.user?.display_name || msg.author || 'Unknown';
     const username = msg.user?.username || 'unknown';
     const authorInitial = author[0].toUpperCase();
-    const avatarUrl = normalizeAvatarUrl(msg.user?.avatar_url)
+    const avatarUrl = withAvatarCacheBuster(
+        normalizeAvatarUrl(msg.user?.avatar_url),
+        msg.user?.id
+    )
 
     const time = new Date(msg.created_at).toLocaleTimeString('ru-RU', {
         hour: '2-digit',
@@ -1040,12 +1169,16 @@ function openMessageContextMenu(event, messageEl) {
     const messageUserId = Number(messageEl.dataset.userId || 0);
     const isDeletedMessage = messageEl.dataset.isDeleted === '1';
     const deleteBtn = messageContextMenu.querySelector('[data-context-action="delete"]');
+    const hardDeleteBtn = messageContextMenu.querySelector('[data-context-action="delete_hard"]');
     const reactBtn = messageContextMenu.querySelector('[data-context-action="react"]');
     const replyBtn = messageContextMenu.querySelector('[data-context-action="reply"]');
     const quickReactions = messageContextMenu.querySelector('[data-context-quick-reactions]');
 
     if (deleteBtn) {
         deleteBtn.classList.toggle('hidden', Number(messageUserId) !== Number(currentUser?.id));
+    }
+    if (hardDeleteBtn) {
+        hardDeleteBtn.classList.toggle('hidden', currentUser?.role !== 'admin');
     }
     if (reactBtn) {
         reactBtn.classList.toggle('hidden', isDeletedMessage);
@@ -1147,6 +1280,46 @@ async function deleteMessage(messageId) {
             }
         } catch (wsErr) {
             console.error('[delete] ws fallback failed', wsErr);
+        }
+    }
+}
+
+async function hardDeleteMessage(messageId) {
+    if (!currentRoom || !messageId) return;
+    
+    // Double check admin
+    if (currentUser?.role !== 'admin') {
+        console.error('[hard_delete] admin access required');
+        return;
+    }
+
+    try {
+        const response = await fetchWithAuth(`${getApiUrl()}/rooms/${currentRoom.id}/messages/${messageId}/hard`, { method: 'DELETE' });
+        if (!response.ok) {
+            throw new Error('Failed to hard delete message');
+        }
+
+        const data = await response.json();
+        // Remove message from DOM completely
+        const messageEl = messagesList.querySelector(`[data-message-id="${messageId}"]`);
+        if (messageEl) {
+            messageEl.remove();
+        }
+    } catch (err) {
+        console.error('[hard_delete] failed', err);
+
+        // Fallback to WS if HTTP unavailable
+        try {
+            await wsReady;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'message_hard_delete',
+                    room_id: currentRoom.id,
+                    message_id: Number(messageId),
+                }));
+            }
+        } catch (wsErr) {
+            console.error('[hard_delete] ws fallback failed', wsErr);
         }
     }
 }
@@ -1291,6 +1464,22 @@ function normalizeAvatarUrl(avatarUrl) {
         return new URL(normalizedPath, getApiUrl()).toString();
     } catch {
         return null;
+    }
+}
+
+function withAvatarCacheBuster(avatarUrl, userId = null) {
+    if (!avatarUrl || !avatarCacheBuster) return avatarUrl;
+
+    if (userId !== null && userId !== undefined && Number(userId) !== Number(currentUser?.id)) {
+        return avatarUrl;
+    }
+
+    try {
+        const url = new URL(avatarUrl);
+        url.searchParams.set('v', avatarCacheBuster);
+        return url.toString();
+    } catch {
+        return avatarUrl;
     }
 }
 
@@ -1788,13 +1977,25 @@ function connectWebSocket() {
     wsReady = new Promise((resolve) => {
         const wsUrl = `${getWsUrl()}/ws`;
         const socket = new WebSocket(wsUrl);
+        
+        // Таймаут на подключение - 10 секунд
+        const connectionTimeout = setTimeout(() => {
+            console.warn('[WS] Connection timeout, proceeding anyway');
+            resolve();
+        }, 10000);
 
         socket.onopen = () => {
+            clearTimeout(connectionTimeout);
             console.log('[WS] Connected globally');
             // Reset connection stats on new connection
             connectionStats.connectedAt = Date.now();
             connectionStats.pingValue = null;
             updateConnectionStatus('connected');
+            
+            // Add log entry for connection
+            const isReconnect = connectionStats.reconnects > 0;
+            addLogEntry(isReconnect ? 'reconnect' : 'connect', isReconnect ? 'Переподключение к серверу' : 'Подключение к серверу');
+            
             ws = socket;
             resolve();
         };
@@ -1837,6 +2038,11 @@ function connectWebSocket() {
                     closeReactionPicker();
                 } else if (data.type === 'message_deleted') {
                     applyDeletedMessage(data.message_id, data.body || 'Сообщение удалено');
+                } else if (data.type === 'message_hard_deleted') {
+                    const messageEl = messagesList.querySelector(`[data-message-id="${data.message_id}"]`);
+                    if (messageEl) {
+                        messageEl.remove();
+                    }
                 } else if (data.type === 'typing') {
                     handleTypingEvent(data);
                 } else if (data.type === 'room_joined') {
@@ -1846,13 +2052,20 @@ function connectWebSocket() {
                     voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                     renderVoiceRooms();
                     renderVoiceParticipantsGrid();
+                    syncRemoteScreensWithParticipants();
+                    renderScreenShareGrid();
                     ensurePeerConnections();
+                    if (localScreenStream) {
+                        signalScreenShareState(true);
+                    }
                     playVoiceEventSound('join');
                 } else if (data.type === 'participant_joined') {
                     if (data.room_id === currentVoiceRoomId) {
                         voiceParticipants = upsertVoiceParticipant(data.participant);
                         voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                         renderVoiceParticipantsGrid();
+                        syncRemoteScreensWithParticipants();
+                        renderScreenShareGrid();
                         ensurePeerConnections();
                         if (data.participant?.user_id !== currentUser?.id) playVoiceEventSound('join');
                     }
@@ -1862,6 +2075,8 @@ function connectWebSocket() {
                         voiceParticipants = voiceParticipants.filter(p => p.user_id !== leftUserId);
                         voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                         closePeerConnection(leftUserId);
+                        syncRemoteScreensWithParticipants();
+                        renderScreenShareGrid();
                         renderVoiceParticipantsGrid();
                         if (leftUserId && leftUserId !== currentUser?.id) playVoiceEventSound('leave');
                     }
@@ -1870,6 +2085,7 @@ function connectWebSocket() {
                         voiceParticipants = upsertVoiceParticipant(data.participant);
                         voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
                         renderVoiceParticipantsGrid();
+                        handleParticipantScreenShareState(data.participant);
                     }
                 } else if (data.type === 'speaking') {
                     if (data.room_id === currentVoiceRoomId) {
@@ -1888,6 +2104,8 @@ function connectWebSocket() {
                     if (data.room_id === currentVoiceRoomId) {
                         voiceParticipants = data.participants || [];
                         renderVoiceParticipantsGrid();
+                        syncRemoteScreensWithParticipants();
+                        renderScreenShareGrid();
                     }
                     renderVoiceRooms();
                 } else if (data.type === 'error') {
@@ -1911,6 +2129,10 @@ function connectWebSocket() {
 
         socket.onclose = () => {
             console.log('[WS] disconnected');
+            
+            // Add log entry for disconnection
+            addLogEntry('disconnect', 'Отключение от сервера');
+            
             updateConnectionStatus('disconnected');
             ws = null;
 
@@ -1938,6 +2160,14 @@ function updateConnectionStatsDisplay() {
     const pingEl = document.getElementById('statsPing');
     const reconnectsEl = document.getElementById('statsReconnects');
     
+    // Logs tab elements
+    const logsStatusEl = document.getElementById('logsStatsStatus');
+    const logsUptimeEl = document.getElementById('logsStatsUptime');
+    const logsSentEl = document.getElementById('logsStatsSent');
+    const logsReceivedEl = document.getElementById('logsStatsReceived');
+    const logsPingEl = document.getElementById('logsStatsPing');
+    const logsReconnectsEl = document.getElementById('logsStatsReconnects');
+    
     if (!statusEl) return;
     
     // Status
@@ -1949,39 +2179,63 @@ function updateConnectionStatsDisplay() {
     statusEl.className = 'stats-value ' + (currentStatus === 'connected' ? 'good' : 
                             currentStatus === 'connecting' ? 'warning' : 'bad');
     
+    // Update logs tab status
+    if (logsStatusEl) {
+        logsStatusEl.textContent = statusText;
+        logsStatusEl.className = 'logs-stat-value ' + (currentStatus === 'connected' ? 'status-good' : 
+                                currentStatus === 'connecting' ? 'status-warning' : 'status-bad');
+    }
+    
     // Uptime
     if (connectionStats.connectedAt) {
         const uptimeMs = Date.now() - connectionStats.connectedAt;
         const seconds = Math.floor(uptimeMs / 1000);
         const minutes = Math.floor(seconds / 60);
         const hours = Math.floor(minutes / 60);
+        let uptimeStr;
         if (hours > 0) {
-            uptimeEl.textContent = `${hours}ч ${minutes % 60}м`;
+            uptimeStr = `${hours}ч ${minutes % 60}м`;
         } else if (minutes > 0) {
-            uptimeEl.textContent = `${minutes}м ${seconds % 60}с`;
+            uptimeStr = `${minutes}м ${seconds % 60}с`;
         } else {
-            uptimeEl.textContent = `${seconds}с`;
+            uptimeStr = `${seconds}с`;
         }
+        uptimeEl.textContent = uptimeStr;
+        if (logsUptimeEl) logsUptimeEl.textContent = uptimeStr;
     } else {
         uptimeEl.textContent = '-';
+        if (logsUptimeEl) logsUptimeEl.textContent = '-';
     }
     
     // Messages sent/received
     sentEl.textContent = connectionStats.messagesSent.toString();
     receivedEl.textContent = connectionStats.messagesReceived.toString();
+    if (logsSentEl) logsSentEl.textContent = connectionStats.messagesSent.toString();
+    if (logsReceivedEl) logsReceivedEl.textContent = connectionStats.messagesReceived.toString();
     
     // Ping
     if (connectionStats.pingValue !== null) {
-        pingEl.textContent = `${connectionStats.pingValue}мс`;
+        const pingText = `${connectionStats.pingValue}мс`;
+        pingEl.textContent = pingText;
         pingEl.className = 'stats-value ' + (connectionStats.pingValue < 100 ? 'good' : 
                                 connectionStats.pingValue < 300 ? 'warning' : 'bad');
+        if (logsPingEl) {
+            logsPingEl.textContent = pingText;
+            logsPingEl.className = 'logs-stat-value ' + (connectionStats.pingValue < 100 ? 'status-good' : 
+                                    connectionStats.pingValue < 300 ? 'status-warning' : 'status-bad');
+        }
     } else {
         pingEl.textContent = '-';
         pingEl.className = 'stats-value';
+        if (logsPingEl) {
+            logsPingEl.textContent = '-';
+            logsPingEl.className = 'logs-stat-value';
+        }
     }
     
     // Reconnects
     reconnectsEl.textContent = connectionStats.reconnects.toString();
+    if (logsReconnectsEl) logsReconnectsEl.textContent = connectionStats.reconnects.toString();
 }
 
 // Toggle connection stats popup
@@ -2025,7 +2279,7 @@ function renderCurrentUser() {
 
     const displayName = currentUser.display_name || currentUser.username || 'User';
     const username = currentUser.username || 'unknown';
-    const avatarUrl = normalizeAvatarUrl(currentUser.avatar_url);
+    const avatarUrl = withAvatarCacheBuster(normalizeAvatarUrl(currentUser.avatar_url));
 
     if (currentUserName) currentUserName.textContent = displayName;
     if (currentUserUsername) currentUserUsername.textContent = `@${username}`;
@@ -2053,11 +2307,15 @@ function renderCurrentUser() {
 function openSettingsModal() {
     if (!currentUser) return;
 
+    // Update logs display when opening settings
+    updateLogsDisplay();
+    updateConnectionStatsDisplay();
+
     shouldRemoveAvatar = false;
     settingsDisplayName.value = currentUser.display_name || '';
     settingsUsername.value = currentUser.username || '';
     avatarInput.value = '';
-    updateSettingsAvatarPreview(normalizeAvatarUrl(currentUser.avatar_url));
+    updateSettingsAvatarPreview(withAvatarCacheBuster(normalizeAvatarUrl(currentUser.avatar_url)));
     
     // Update user preview
     const displayNameEl = document.getElementById('settingsUserDisplayName');
@@ -2110,9 +2368,37 @@ function updateSettingsAvatarPreview(avatarUrl) {
 }
 
 async function saveSettings() {
+    const previousAvatarUrl = currentUser?.avatar_url || null;
+    const hasAvatarPayload = Boolean(window.croppedAvatarData || avatarInput.files?.[0]);
+    const avatarUpdateRequested = shouldRemoveAvatar || hasAvatarPayload;
+
+    const displayNameValue = settingsDisplayName.value.trim();
+    const usernameValue = settingsUsername.value.trim();
+
+    if (!displayNameValue) {
+        alert('Nickname �� ����� ���� ������');
+        settingsDisplayName.focus();
+        return;
+    }
+    if (displayNameValue.length > 50) {
+        alert('Nickname ������ ���� �� ������� 50 ��������');
+        settingsDisplayName.focus();
+        return;
+    }
+    if (usernameValue.length < 3) {
+        alert('Tag ������ ��������� ������� 3 �������');
+        settingsUsername.focus();
+        return;
+    }
+    if (usernameValue.length > 32) {
+        alert('Tag ������ ���� �� ������� 32 ��������');
+        settingsUsername.focus();
+        return;
+    }
+
     const formData = new FormData();
-    formData.append('display_name', settingsDisplayName.value.trim());
-    formData.append('username', settingsUsername.value.trim());
+    formData.append('display_name', displayNameValue);
+    formData.append('username', usernameValue);
     formData.append('remove_avatar', shouldRemoveAvatar ? 'true' : 'false');
 
     // Check for cropped avatar data first
@@ -2139,22 +2425,27 @@ async function saveSettings() {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Не удалось сохранить настройки');
+            throw new Error(error.detail || '�� ������� ��������� ���������');
         }
 
         currentUser = await response.json();
+        if (avatarUpdateRequested || previousAvatarUrl !== currentUser.avatar_url) {
+            avatarCacheBuster = String(Date.now());
+        }
         renderCurrentUser();
         closeSettingsModal();
 
         if (currentRoom) {
-            await loadMessages(currentRoom.id);
+            await Promise.all([
+                loadMessages(currentRoom.id),
+                loadAllUsers(),
+            ]);
         }
     } catch (err) {
         console.error('Failed to save settings:', err);
-        alert(err.message || 'Не удалось сохранить настройки');
+        alert(err.message || '�� ������� ��������� ���������');
     }
 }
-
 async function logout() {
     try {
         const response = await fetch(`${getApiUrl()}/auth/logout`, {
@@ -2432,6 +2723,9 @@ messageContextMenu.addEventListener('click', (event) => {
     if (actionBtn.dataset.contextAction === 'delete') {
         deleteMessage(messageId);
     }
+    if (actionBtn.dataset.contextAction === 'delete_hard') {
+        hardDeleteMessage(messageId);
+    }
 
     closeMessageContextMenu();
 });
@@ -2575,6 +2869,20 @@ createRoomModal.addEventListener('click', (e) => {
 if (settingsBtnSidebar) {
     settingsBtnSidebar.addEventListener('click', openSettingsModal);
 }
+
+// Clear logs button
+const clearLogsBtn = document.getElementById('clearLogsBtn');
+if (clearLogsBtn) {
+    clearLogsBtn.addEventListener('click', clearLogs);
+}
+
+// Update stats periodically for uptime
+setInterval(() => {
+    if (connectionStatus.classList.contains('connected')) {
+        updateConnectionStatsDisplay();
+    }
+}, 1000);
+
 // Note: settingsBtn (header button) was removed - use settingsBtnSidebar instead
 
 // Activities (Game) Modal
@@ -2965,16 +3273,13 @@ function openAvatarCropper(imageUrl) {
         preview.innerHTML = '';
         preview.appendChild(cropperCanvas);
     }
-    
-    cropperImage.src = imageUrl;
-    cropperImage.onload = () => {
-        // Store original image
-        cropperOriginalImage = new Image();
-        cropperOriginalImage.src = imageUrl;
-        
-        // Fit image to container initially
+
+    // Load source image for cropping
+    cropperOriginalImage = new Image();
+    cropperOriginalImage.onload = () => {
         fitImageToContainer();
     };
+    cropperOriginalImage.src = imageUrl;
     
     // Show cropper container
     avatarCropperContainer.style.display = 'block';
@@ -2984,19 +3289,20 @@ function openAvatarCropper(imageUrl) {
 }
 
 function fitImageToContainer() {
-    if (!cropperImage.naturalWidth || !cropperCanvasCtx) return;
+    if (!cropperOriginalImage?.naturalWidth || !cropperCanvasCtx) return;
     
     const canvasWidth = 240;
     const canvasHeight = 240;
     
     // Calculate scale to COVER the canvas (like object-fit: cover)
-    const scaleX = canvasWidth / cropperImage.naturalWidth;
-    const scaleY = canvasHeight / cropperImage.naturalHeight;
+    const scaleX = canvasWidth / cropperOriginalImage.naturalWidth;
+    const scaleY = canvasHeight / cropperOriginalImage.naturalHeight;
     baseScale = Math.max(scaleX, scaleY);
     
-    // Set slider range: 0.5x to 2.5x of base scale
-    cropperZoomSlider.min = baseScale * 0.5;
-    cropperZoomSlider.max = baseScale * 2.5;
+    // Keep zoom range sane to avoid over-zooming the selected thumbnail
+    cropperZoomSlider.min = baseScale;
+    cropperZoomSlider.max = baseScale * 1.8;
+    cropperZoomSlider.step = Math.max(baseScale * 0.02, 0.001);
     cropperZoomSlider.value = baseScale;
     
     cropScale = baseScale;
@@ -3016,8 +3322,13 @@ function renderCropperPreview() {
     cropperCanvasCtx.clearRect(0, 0, canvasWidth, canvasHeight);
     
     // Calculate displayed size
-    const displayWidth = cropperOriginalImage.naturalWidth * (cropScale / baseScale);
-    const displayHeight = cropperOriginalImage.naturalHeight * (cropScale / baseScale);
+    const displayWidth = cropperOriginalImage.naturalWidth * cropScale;
+    const displayHeight = cropperOriginalImage.naturalHeight * cropScale;
+
+    const maxPanX = Math.max(0, (displayWidth - canvasWidth) / 2);
+    const maxPanY = Math.max(0, (displayHeight - canvasHeight) / 2);
+    panX = Math.min(maxPanX, Math.max(-maxPanX, panX));
+    panY = Math.min(maxPanY, Math.max(-maxPanY, panY));
     
     // Calculate offset to center + pan
     const offsetX = (canvasWidth - displayWidth) / 2 + panX;
@@ -3081,7 +3392,7 @@ applyCropBtn?.addEventListener('click', async () => {
     
     // Use the same logic as the preview - just scale to output size
     const containerSize = 240;
-    const displayScale = cropScale / baseScale;
+    const displayScale = cropScale;
     const displayedWidth = cropperOriginalImage.naturalWidth * displayScale;
     const displayedHeight = cropperOriginalImage.naturalHeight * displayScale;
     
@@ -3144,29 +3455,17 @@ function initCropperDrag() {
         let newPanX = initialPanX + dx;
         let newPanY = initialPanY + dy;
         
-        // Limit pan so image doesn't go completely off screen
-        const displayScale = cropScale / baseScale;
-        const displayedWidth = cropperImage.naturalWidth * displayScale;
-        const displayedHeight = cropperImage.naturalHeight * displayScale;
+                // Limit pan so image stays within crop bounds
+        const displayScale = cropScale;
+        const displayedWidth = cropperOriginalImage.naturalWidth * displayScale;
+        const displayedHeight = cropperOriginalImage.naturalHeight * displayScale;
         const containerSize = 240;
-        
-        // Max pan is when image edge touches container edge
-        const maxPan = (containerSize - displayedWidth) / 2;
-        const maxPanY = (containerSize - displayedHeight) / 2;
-        
-        // If image is larger than container, allow panning
-        // If image is smaller, center it
-        if (displayedWidth > containerSize) {
-            panX = Math.max(maxPan, Math.min(-maxPan, newPanX));
-        } else {
-            panX = 0;
-        }
-        
-        if (displayedHeight > containerSize) {
-            panY = Math.max(maxPanY, Math.min(-maxPanY, newPanY));
-        } else {
-            panY = 0;
-        }
+
+        const maxPanX = Math.max(0, (displayedWidth - containerSize) / 2);
+        const maxPanY = Math.max(0, (displayedHeight - containerSize) / 2);
+
+        panX = Math.min(maxPanX, Math.max(-maxPanX, newPanX));
+        panY = Math.min(maxPanY, Math.max(-maxPanY, newPanY));
         
         renderCropperPreview();
     };
@@ -3193,6 +3492,91 @@ settingsUsername?.addEventListener('input', () => {
         userTagEl.textContent = '@' + (settingsUsername.value || 'username');
     }
 });
+
+// Editable profile fields with edit buttons
+const displayNameEl = document.getElementById('settingsUserDisplayName');
+const userTagEl = document.getElementById('settingsUserTag');
+const displayNameInput = document.getElementById('settingsDisplayNameInput');
+const usernameInput = document.getElementById('settingsUsernameInput');
+
+// Find edit buttons
+const editBtns = document.querySelectorAll('.profile-edit-btn');
+
+editBtns.forEach((btn, index) => {
+    btn.addEventListener('click', () => {
+        if (index === 0) {
+            // Edit display name
+            const currentValue = displayNameEl?.textContent || '';
+            if (displayNameInput) {
+                displayNameInput.style.display = 'block';
+                displayNameInput.value = currentValue;
+                displayNameInput.focus();
+            }
+            if (displayNameEl) displayNameEl.style.display = 'none';
+        } else {
+            // Edit username
+            const currentValue = userTagEl?.textContent?.replace('@', '') || '';
+            if (usernameInput) {
+                usernameInput.style.display = 'block';
+                usernameInput.value = currentValue;
+                usernameInput.focus();
+            }
+            if (userTagEl) userTagEl.style.display = 'none';
+        }
+    });
+});
+
+// Handle display name input
+if (displayNameInput) {
+    displayNameInput.addEventListener('blur', () => {
+        const newValue = displayNameInput.value.trim();
+        if (displayNameEl) {
+            displayNameEl.textContent = newValue || 'User';
+            displayNameEl.style.display = 'inline';
+        }
+        if (settingsDisplayName) {
+            settingsDisplayName.value = newValue;
+        }
+        displayNameInput.style.display = 'none';
+    });
+    
+    displayNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            displayNameInput.blur();
+        }
+        if (e.key === 'Escape') {
+            displayNameInput.value = settingsDisplayName?.value || '';
+            displayNameInput.blur();
+        }
+    });
+}
+
+// Handle username input
+if (usernameInput) {
+    usernameInput.addEventListener('blur', () => {
+        const newValue = usernameInput.value.trim();
+        if (userTagEl) {
+            userTagEl.textContent = '@' + (newValue || 'username');
+            userTagEl.style.display = 'inline';
+        }
+        if (settingsUsername) {
+            settingsUsername.value = newValue;
+        }
+        usernameInput.style.display = 'none';
+    });
+    
+    usernameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            usernameInput.blur();
+        }
+        if (e.key === 'Escape') {
+            usernameInput.value = settingsUsername?.value || '';
+            usernameInput.blur();
+        }
+    });
+}
 
 settingsForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -3285,7 +3669,10 @@ async function loadAllUsers() {
  */
 function renderUserItem(user) {
     const displayName = user.display_name || user.username;
-    const avatarUrl = normalizeAvatarUrl(user.avatar_url);
+    const avatarUrl = withAvatarCacheBuster(
+        normalizeAvatarUrl(user.avatar_url),
+        user.id
+    );
     const initial = displayName[0]?.toUpperCase() || 'U';
 
     const avatarHtml = avatarUrl
@@ -3365,7 +3752,10 @@ async function loadOnlineUsers() {
 
         usersList.innerHTML = users.map(user => {
             const displayName = user.display_name || user.username;
-            const avatarUrl = normalizeAvatarUrl(user.avatar_url);
+            const avatarUrl = withAvatarCacheBuster(
+        normalizeAvatarUrl(user.avatar_url),
+        user.id
+    );
             const initial = displayName[0]?.toUpperCase() || 'U';
 
             const avatarHtml = avatarUrl
@@ -3676,30 +4066,71 @@ async function loadVoiceRooms() {
     renderVoiceRooms();
 }
 
+function attachVoiceAvatarFallbacks(container) {
+    if (!container) return;
+
+    container.querySelectorAll('img[data-avatar-fallback]').forEach(img => {
+        if (img.dataset.avatarFallbackBound === '1') return;
+        img.dataset.avatarFallbackBound = '1';
+
+        img.addEventListener('error', () => {
+            const target = img.closest('[data-avatar-fallback-target]');
+            if (!target) return;
+            const fallbackInitial = escapeHtml(img.dataset.avatarFallback || 'U');
+            target.innerHTML = `<span>${fallbackInitial}</span>`;
+        }, { once: true });
+    });
+}
+
 function renderVoiceRooms() {
     if (!voiceRoomsList) return;
     voiceRoomsList.innerHTML = voiceRooms.map(room => {
         const participants = voiceRoomParticipantsByRoom[room.id] || [];
-        const icons = participants.slice(0, 4).map(p => `<span class="voice-room-user-icon ${p.speaking ? 'speaking' : ''}" title="${escapeHtml(p.display_name || p.username)}">${escapeHtml((p.display_name || p.username || '?')[0]?.toUpperCase() || '?')}</span>`).join('');
+        const icons = participants.slice(0, 4).map((participant) => {
+            const rawName = participant.display_name || participant.username || '?';
+            const safeName = escapeHtml(rawName);
+            const initial = escapeHtml(rawName[0]?.toUpperCase() || '?');
+            const avatarUrl = withAvatarCacheBuster(
+                normalizeAvatarUrl(participant.avatar_url),
+                participant.user_id
+            );
+            const avatarMarkup = avatarUrl
+                ? `<img src="${escapeHtml(avatarUrl)}" alt="${safeName}" class="voice-room-user-avatar" data-avatar-fallback="${initial}">`
+                : `<span class="voice-room-user-initial">${initial}</span>`;
+
+            return `<span class="voice-room-user-icon ${participant.speaking ? 'speaking' : ''}" title="${safeName}"><span class="voice-room-user-media" data-avatar-fallback-target="1">${avatarMarkup}</span></span>`;
+        }).join('');
         const more = participants.length > 4 ? `<span class="voice-room-user-more">+${participants.length - 4}</span>` : '';
         return `<div class="voice-room-item ${room.id === currentVoiceRoomId ? 'active' : ''}" data-voice-room-id="${room.id}"><span class="voice-room-item-title">🔊 ${escapeHtml(room.name)}</span><span class="voice-room-users">${icons}${more}</span></div>`;
     }).join('');
+    attachVoiceAvatarFallbacks(voiceRoomsList);
     voiceRoomState.textContent = currentVoiceRoomId ? `В комнате: ${escapeHtml((voiceRooms.find(r => r.id === currentVoiceRoomId) || {}).name || '')}` : 'Не в голосовой комнате';
-    toggleMicBtn.disabled = !currentVoiceRoomId;
-    toggleDeafenBtn.disabled = !currentVoiceRoomId;
-    leaveVoiceBtn.disabled = !currentVoiceRoomId;
     const controlsVisible = !!currentVoiceRoomId;
+    toggleMicBtn.disabled = !controlsVisible;
+    toggleDeafenBtn.disabled = !controlsVisible;
+    toggleScreenShareBtn.disabled = !controlsVisible;
+    leaveVoiceBtn.disabled = !controlsVisible;
     if (voiceControls) voiceControls.style.display = controlsVisible ? "flex" : "none";
     if (localAudioControls) localAudioControls.style.display = controlsVisible ? "grid" : "none";
+    if (screenShareStage) {
+        screenShareStage.classList.toggle('visible', controlsVisible);
+    }
+    updateScreenShareButtonState();
 }
 
 function renderVoiceParticipantsGrid() {
     if (!voiceParticipantsGrid) return;
 
     voiceParticipantsGrid.innerHTML = voiceParticipants.map(participant => {
-        const displayName = escapeHtml(participant.display_name || participant.username);
-        const username = escapeHtml(participant.username);
-        const initials = displayName[0]?.toUpperCase() || username[0]?.toUpperCase() || 'U';
+        const rawDisplayName = participant.display_name || participant.username || 'User';
+        const rawUsername = participant.username || participant.display_name || 'user';
+        const displayName = escapeHtml(rawDisplayName);
+        const username = escapeHtml(rawUsername);
+        const initial = escapeHtml(rawDisplayName[0]?.toUpperCase() || rawUsername[0]?.toUpperCase() || 'U');
+        const avatarUrl = withAvatarCacheBuster(
+            normalizeAvatarUrl(participant.avatar_url),
+            participant.user_id
+        );
 
         let statusClass = 'mic-on';
         let statusIcon = '🎤';
@@ -3718,14 +4149,18 @@ function renderVoiceParticipantsGrid() {
         ].filter(Boolean).join(' ');
 
         const volumePct = Math.round((participantVolumes[participant.user_id] ?? 1) * 100);
+        const screenBadge = participant.screen_sharing ? '<span class="voice-participant-badge active" title="Screen sharing">🖥</span>' : '';
+        const avatarMarkup = avatarUrl
+            ? `<img src="${escapeHtml(avatarUrl)}" alt="${displayName}" class="voice-participant-avatar-img" data-avatar-fallback="${initial}">`
+            : `<span>${initial}</span>`;
 
         return `
             <div class="${cardClasses}" data-user-id="${participant.user_id}" data-username="${username}">
                 <div class="voice-participant-avatar">
-                    <span>${initials}</span>
+                    <div class="voice-participant-avatar-media" data-avatar-fallback-target="1">${avatarMarkup}</div>
                     <div class="voice-participant-status ${statusClass}">${statusIcon}</div>
                 </div>
-                <div class="voice-participant-name" title="${displayName}">${displayName}</div>
+                <div class="voice-participant-head"><div class="voice-participant-name" title="${displayName}">${displayName}</div>${screenBadge}</div>
                 <div class="voice-participant-volume">
                     <div class="voice-participant-volume-fill" style="width: ${volumePct}%"></div>
                 </div>
@@ -3733,16 +4168,17 @@ function renderVoiceParticipantsGrid() {
         `;
     }).join('');
 
+    attachVoiceAvatarFallbacks(voiceParticipantsGrid);
+
     voiceParticipantsGrid.querySelectorAll('.voice-participant-card').forEach(card => {
         card.addEventListener('contextmenu', handleParticipantContextMenu);
     });
-    
+
     // Update collapsed participants if overlay is collapsed
     if (isVoiceOverlayCollapsed) {
         updateCollapsedParticipants();
     }
 }
-
 function handleParticipantContextMenu(event) {
     event.preventDefault();
     const card = event.currentTarget;
@@ -3769,6 +4205,575 @@ function handleParticipantContextMenu(event) {
         setParticipantVolume(userId, volPct / 100);
         renderVoiceParticipantsGrid();
     };
+}
+
+function getVoiceParticipantById(userId) {
+    return voiceParticipants.find((participant) => participant.user_id === userId) || null;
+}
+
+function getVoiceDisplayName(userId) {
+    const participant = getVoiceParticipantById(userId);
+    if (participant) {
+        return participant.display_name || participant.username || `User ${userId}`;
+    }
+    if (userId === currentUser?.id) {
+        return currentUser.display_name || currentUser.username || 'You';
+    }
+    return `User ${userId}`;
+}
+
+function getScreenStreamForUser(userId) {
+    if (userId === currentUser?.id) return localScreenStream;
+    return remoteScreenStreams.get(userId)?.stream || null;
+}
+
+function closeScreenPopout(userId) {
+    const key = String(userId);
+    const popup = popoutWindows.get(key);
+    if (!popup) return;
+    try {
+        if (!popup.closed) popup.close();
+    } catch (_) {
+        // ignore
+    }
+    popoutWindows.delete(key);
+}
+
+function updateLocalScreenShareParticipantState(sharing) {
+    const meId = currentUser?.id;
+    if (!meId) return;
+    voiceParticipants = voiceParticipants.map((participant) => {
+        if (participant.user_id !== meId) return participant;
+        return { ...participant, screen_sharing: sharing };
+    });
+    if (currentVoiceRoomId) {
+        voiceRoomParticipantsByRoom[currentVoiceRoomId] = voiceParticipants;
+    }
+}
+
+function signalScreenShareState(sharing) {
+    updateLocalScreenShareParticipantState(sharing);
+    renderVoiceParticipantsGrid();
+    if (ws && currentVoiceRoomId && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'set_screen_share',
+            room_id: currentVoiceRoomId,
+            sharing,
+        }));
+    }
+}
+
+function syncRemoteScreensWithParticipants() {
+    const sharingIds = new Set(
+        voiceParticipants
+            .filter((participant) => participant.screen_sharing && participant.user_id !== currentUser?.id)
+            .map((participant) => participant.user_id)
+    );
+
+    for (const userId of Array.from(remoteScreenStreams.keys())) {
+        if (sharingIds.has(userId)) continue;
+        remoteAudioStreams.delete(userId);
+    remoteScreenStreams.delete(userId);
+        closeScreenPopout(userId);
+        if (activeScreenViewerUserId === userId) {
+            closeScreenViewer();
+        }
+    }
+}
+
+function handleParticipantScreenShareState(participant) {
+    if (!participant || !participant.user_id) return;
+    if (!participant.screen_sharing && participant.user_id !== currentUser?.id) {
+        remoteScreenStreams.delete(participant.user_id);
+        closeScreenPopout(participant.user_id);
+        if (activeScreenViewerUserId === participant.user_id) {
+            closeScreenViewer();
+        }
+    }
+    renderScreenShareGrid();
+    updateScreenShareButtonState();
+}
+
+function updateScreenShareButtonState() {
+    if (!toggleScreenShareBtn) return;
+    const sharing = !!localScreenStream;
+    toggleScreenShareBtn.classList.toggle('btn-active', sharing);
+    toggleScreenShareBtn.textContent = sharing ? '🖥 Sharing' : '🖥 Share';
+    toggleScreenShareBtn.title = sharing ? 'Stop screen sharing' : 'Start screen sharing';
+}
+
+function renderScreenShareGrid() {
+    if (!screenShareGrid || !screenShareCount) return;
+
+    const sharingParticipants = voiceParticipants.filter((participant) => participant.screen_sharing);
+    const hasLocalStream = !!localScreenStream;
+    if (hasLocalStream && !sharingParticipants.some((participant) => participant.user_id === currentUser?.id)) {
+        sharingParticipants.push({
+            user_id: currentUser?.id,
+            username: currentUser?.username || 'you',
+            display_name: currentUser?.display_name || currentUser?.username || 'You',
+            screen_sharing: true,
+        });
+    }
+
+    screenShareCount.textContent = String(sharingParticipants.length);
+    screenShareGrid.innerHTML = '';
+
+    if (!sharingParticipants.length) {
+        const empty = document.createElement('div');
+        empty.className = 'screen-share-empty';
+        empty.textContent = currentVoiceRoomId
+            ? 'Nobody is sharing right now'
+            : 'Join a voice room to start sharing';
+        screenShareGrid.appendChild(empty);
+        return;
+    }
+
+    for (const participant of sharingParticipants) {
+        const userId = participant.user_id;
+        const isLocal = userId === currentUser?.id;
+        const displayName = getVoiceDisplayName(userId);
+        const stream = getScreenStreamForUser(userId);
+
+        const card = document.createElement('div');
+        card.className = `screen-share-card${isLocal ? ' local' : ''}`;
+
+        const header = document.createElement('div');
+        header.className = 'screen-share-card-header';
+        const name = document.createElement('div');
+        name.className = 'screen-share-name';
+        name.textContent = displayName;
+        const status = document.createElement('div');
+        status.className = 'screen-share-status';
+        status.textContent = isLocal ? 'You' : 'Live';
+        header.appendChild(name);
+        header.appendChild(status);
+
+        const videoWrap = document.createElement('div');
+        videoWrap.className = 'screen-share-video-wrap';
+
+        if (stream) {
+            const video = document.createElement('video');
+            video.className = 'screen-share-video';
+            video.autoplay = true;
+            video.playsInline = true;
+            video.controls = false;
+            video.muted = isLocal;
+            video.srcObject = stream;
+            videoWrap.appendChild(video);
+        } else {
+            const waiting = document.createElement('div');
+            waiting.className = 'screen-share-waiting';
+            waiting.innerHTML = '<div>📡</div><div>Connecting stream...</div>';
+            videoWrap.appendChild(waiting);
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'screen-share-actions';
+
+        const viewBtn = document.createElement('button');
+        viewBtn.type = 'button';
+        viewBtn.className = 'screen-share-action';
+        viewBtn.textContent = 'View';
+        viewBtn.disabled = !stream;
+        viewBtn.addEventListener('click', () => openScreenViewer(userId));
+
+        const popoutBtn = document.createElement('button');
+        popoutBtn.type = 'button';
+        popoutBtn.className = 'screen-share-action';
+        popoutBtn.textContent = 'Popout';
+        popoutBtn.disabled = !stream;
+        popoutBtn.addEventListener('click', () => openScreenPopout(userId));
+
+        const pipBtn = document.createElement('button');
+        pipBtn.type = 'button';
+        pipBtn.className = 'screen-share-action';
+        pipBtn.textContent = 'PiP';
+        pipBtn.disabled = !stream;
+        pipBtn.addEventListener('click', async () => {
+            const video = card.querySelector('video');
+            if (!video) return;
+            await togglePictureInPicture(video);
+        });
+
+        actions.appendChild(viewBtn);
+        actions.appendChild(popoutBtn);
+        actions.appendChild(pipBtn);
+
+        if (isLocal) {
+            const stopBtn = document.createElement('button');
+            stopBtn.type = 'button';
+            stopBtn.className = 'screen-share-action';
+            stopBtn.textContent = 'Stop';
+            stopBtn.addEventListener('click', () => {
+                stopScreenShare({ notifyServer: true, renegotiate: true }).catch(() => {});
+            });
+            actions.appendChild(stopBtn);
+        }
+
+        card.appendChild(header);
+        card.appendChild(videoWrap);
+        card.appendChild(actions);
+        screenShareGrid.appendChild(card);
+    }
+}
+
+async function togglePictureInPicture(video) {
+    if (!video || !document.pictureInPictureEnabled || typeof video.requestPictureInPicture !== 'function') {
+        showNotification('Picture-in-Picture is not supported', 'error');
+        return;
+    }
+
+    try {
+        if (document.pictureInPictureElement === video) {
+            await document.exitPictureInPicture();
+            return;
+        }
+        await video.requestPictureInPicture();
+    } catch (err) {
+        showNotification('Failed to open Picture-in-Picture', 'error');
+    }
+}
+
+function openScreenPopout(userId) {
+    const stream = getScreenStreamForUser(userId);
+    if (!stream) {
+        showNotification('Stream is not available yet', 'info');
+        return;
+    }
+
+    const key = String(userId);
+    const existing = popoutWindows.get(key);
+    if (existing && !existing.closed) {
+        existing.focus();
+        return;
+    }
+
+    const title = getVoiceDisplayName(userId);
+    const popup = window.open('', `screen-share-${key}`, 'width=1180,height=760');
+    if (!popup) {
+        showNotification('Allow popups to open extra window', 'error');
+        return;
+    }
+
+    popup.document.title = `${title} - Screen Share`;
+    popup.document.body.style.margin = '0';
+    popup.document.body.style.background = '#060a13';
+    popup.document.body.style.color = '#e5e7eb';
+    popup.document.body.style.fontFamily = 'Inter, sans-serif';
+    popup.document.body.innerHTML = '<div style="padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.1);font-size:14px;font-weight:600;">' + escapeHtml(title) + '</div>';
+
+    const video = popup.document.createElement('video');
+    video.autoplay = true;
+    video.controls = true;
+    video.playsInline = true;
+    video.muted = userId === currentUser?.id;
+    video.srcObject = stream;
+    video.style.width = '100%';
+    video.style.height = 'calc(100vh - 50px)';
+    video.style.objectFit = 'contain';
+    video.style.background = '#020409';
+    popup.document.body.appendChild(video);
+
+    popup.addEventListener('beforeunload', () => {
+        popoutWindows.delete(key);
+    });
+
+    popoutWindows.set(key, popup);
+}
+
+function openScreenViewer(userId) {
+    const stream = getScreenStreamForUser(userId);
+    if (!stream || !screenViewerModal || !screenViewerVideo) {
+        showNotification('Stream is not available yet', 'info');
+        return;
+    }
+
+    activeScreenViewerUserId = userId;
+    if (screenViewerTitle) {
+        screenViewerTitle.textContent = `${getVoiceDisplayName(userId)} - Screen Share`;
+    }
+    screenViewerVideo.srcObject = stream;
+    screenViewerVideo.muted = userId === currentUser?.id;
+    screenViewerModal.classList.add('active');
+}
+
+function closeScreenViewer() {
+    if (!screenViewerModal || !screenViewerVideo) return;
+    screenViewerModal.classList.remove('active');
+    screenViewerVideo.pause();
+    screenViewerVideo.srcObject = null;
+    activeScreenViewerUserId = null;
+}
+
+function resetPendingScreenPreview() {
+    if (screenSharePreview) {
+        screenSharePreview.pause();
+        screenSharePreview.srcObject = null;
+    }
+    if (screenSharePreviewWrap) {
+        screenSharePreviewWrap.classList.remove('ready');
+    }
+    if (screenSharePreviewMeta) {
+        screenSharePreviewMeta.textContent = '';
+    }
+    if (startScreenShareBtn) {
+        startScreenShareBtn.disabled = true;
+    }
+}
+
+function updatePendingScreenMeta(stream) {
+    if (!screenSharePreviewMeta) return;
+    const track = stream?.getVideoTracks?.()[0];
+    if (!track) {
+        screenSharePreviewMeta.textContent = '';
+        return;
+    }
+
+    const settings = track.getSettings ? track.getSettings() : {};
+    const size = settings.width && settings.height ? `${settings.width}x${settings.height}` : 'Auto';
+    const fps = settings.frameRate ? `${Math.round(settings.frameRate)}fps` : 'Auto FPS';
+    const name = track.label || 'Screen source';
+    screenSharePreviewMeta.textContent = `${name} ${size} ${fps}`;
+}
+
+function closeScreenShareModal({ keepPending = false } = {}) {
+    if (!screenShareModal) return;
+    screenShareModal.classList.remove('active');
+    if (!keepPending && pendingScreenStream) {
+        pendingScreenStream.getTracks().forEach((track) => track.stop());
+        pendingScreenStream = null;
+    }
+    resetPendingScreenPreview();
+}
+
+function openScreenShareModal() {
+    if (!currentVoiceRoomId) {
+        showNotification('Join a voice room first', 'error');
+        return;
+    }
+    if (!screenShareModal) return;
+    closeScreenShareModal();
+    screenShareModal.classList.add('active');
+}
+
+function getScreenShareConstraints() {
+    const quality = screenShareQuality?.value || 'balanced';
+    const includeAudio = !!screenShareAudio?.checked;
+
+    let width = 1920;
+    let height = 1080;
+    let frameRate = 30;
+
+    if (quality === 'quality') {
+        width = 2560;
+        height = 1440;
+        frameRate = 60;
+    } else if (quality === 'performance') {
+        width = 1280;
+        height = 720;
+        frameRate = 15;
+    }
+
+    return {
+        video: {
+            width: { ideal: width },
+            height: { ideal: height },
+            frameRate: { ideal: frameRate, max: frameRate },
+            cursor: 'always',
+        },
+        audio: includeAudio,
+    };
+}
+
+async function pickScreenShareSource() {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+        showNotification('Screen sharing is not supported in this browser', 'error');
+        return;
+    }
+
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia(getScreenShareConstraints());
+
+        if (pendingScreenStream) {
+            pendingScreenStream.getTracks().forEach((track) => track.stop());
+        }
+
+        pendingScreenStream = stream;
+        if (screenSharePreview) {
+            screenSharePreview.srcObject = stream;
+            await screenSharePreview.play().catch(() => {});
+        }
+        if (screenSharePreviewWrap) {
+            screenSharePreviewWrap.classList.add('ready');
+        }
+        updatePendingScreenMeta(stream);
+        if (startScreenShareBtn) {
+            startScreenShareBtn.disabled = false;
+        }
+    } catch (err) {
+        if (err?.name !== 'NotAllowedError') {
+            showNotification('Failed to capture screen', 'error');
+        }
+    }
+}
+
+async function attachLocalScreenTrackToPeer(targetUserId, pc) {
+    if (!localScreenStream) return;
+    const tracks = localScreenStream.getTracks().filter((track) => track.kind === 'video' || track.kind === 'audio');
+    if (!tracks.length) return;
+
+    const existingSenders = localScreenSenders.get(targetUserId) || [];
+    const existingKinds = new Set(existingSenders.map((sender) => sender.track?.kind));
+
+    for (const track of tracks) {
+        if (existingKinds.has(track.kind)) continue;
+        const sender = pc.addTrack(track, localScreenStream);
+        existingSenders.push(sender);
+        existingKinds.add(track.kind);
+    }
+
+    if (existingSenders.length) {
+        localScreenSenders.set(targetUserId, existingSenders);
+    }
+}
+
+async function renegotiatePeerConnection(targetUserId) {
+    const pc = peerConnections.get(targetUserId);
+    if (!pc || pc.connectionState === 'closed') return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !currentVoiceRoomId) return;
+    if (peerRenegotiationLocks.has(targetUserId)) return;
+
+    if (pc.signalingState !== 'stable') {
+        setTimeout(() => renegotiatePeerConnection(targetUserId), 180);
+        return;
+    }
+
+    peerRenegotiationLocks.add(targetUserId);
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({
+            type: 'rtc_offer',
+            room_id: currentVoiceRoomId,
+            target_user_id: targetUserId,
+            payload: offer,
+        }));
+    } catch (err) {
+        console.error('Failed to renegotiate peer connection', err);
+    } finally {
+        peerRenegotiationLocks.delete(targetUserId);
+    }
+}
+
+async function renegotiateAllPeers() {
+    for (const targetUserId of peerConnections.keys()) {
+        await renegotiatePeerConnection(targetUserId);
+    }
+}
+
+async function startScreenShareFromPending() {
+    if (!currentVoiceRoomId) {
+        closeScreenShareModal();
+        return;
+    }
+    if (!pendingScreenStream) {
+        await pickScreenShareSource();
+    }
+    if (!pendingScreenStream) return;
+
+    if (localScreenStream) {
+        await stopScreenShare({ notifyServer: true, renegotiate: true, silent: true });
+    }
+
+    localScreenStream = pendingScreenStream;
+    pendingScreenStream = null;
+
+    const track = localScreenStream.getVideoTracks()[0];
+    if (!track) {
+        await stopScreenShare({ notifyServer: false, renegotiate: false, silent: true });
+        return;
+    }
+
+    track.onended = () => {
+        stopScreenShare({ notifyServer: true, renegotiate: true }).catch(() => {});
+    };
+
+    closeScreenShareModal({ keepPending: true });
+
+    for (const [targetUserId, pc] of peerConnections.entries()) {
+        await attachLocalScreenTrackToPeer(targetUserId, pc);
+    }
+
+    signalScreenShareState(true);
+    renderScreenShareGrid();
+    updateScreenShareButtonState();
+
+    await renegotiateAllPeers();
+    showNotification('Screen sharing started', 'success');
+}
+
+async function stopScreenShare(options = {}) {
+    const {
+        notifyServer = true,
+        renegotiate = true,
+        silent = false,
+    } = options;
+
+    if (isScreenShareStopping) return;
+    if (!localScreenStream && !pendingScreenStream) return;
+
+    isScreenShareStopping = true;
+    try {
+        if (pendingScreenStream) {
+            pendingScreenStream.getTracks().forEach((track) => track.stop());
+            pendingScreenStream = null;
+        }
+
+        const hadLocalScreen = !!localScreenStream;
+        if (localScreenStream) {
+            localScreenStream.getTracks().forEach((track) => track.stop());
+            localScreenStream = null;
+        }
+
+        closeScreenPopout(currentUser?.id);
+
+        for (const [targetUserId, senders] of localScreenSenders.entries()) {
+            const pc = peerConnections.get(targetUserId);
+            if (!pc || pc.connectionState === 'closed') continue;
+            for (const sender of senders) {
+                try {
+                    pc.removeTrack(sender);
+                } catch (_) {
+                    // ignore
+                }
+            }
+        }
+        localScreenSenders.clear();
+
+        if (hadLocalScreen && notifyServer) {
+            signalScreenShareState(false);
+        } else if (!notifyServer) {
+            updateLocalScreenShareParticipantState(false);
+            renderVoiceParticipantsGrid();
+        }
+
+        if (hadLocalScreen && renegotiate) {
+            await renegotiateAllPeers();
+        }
+
+        if (activeScreenViewerUserId === currentUser?.id) {
+            closeScreenViewer();
+        }
+
+        renderScreenShareGrid();
+        updateScreenShareButtonState();
+        if (!silent && hadLocalScreen) {
+            showNotification('Screen sharing stopped', 'info');
+        }
+    } finally {
+        isScreenShareStopping = false;
+    }
 }
 
 async function ensureLocalStream() {
@@ -3811,10 +4816,21 @@ async function joinVoiceRoom(roomId) {
 }
 
 function leaveVoiceRoom() {
+    stopScreenShare({ notifyServer: true, renegotiate: false, silent: true }).catch(() => {});
+    closeScreenShareModal();
+    closeScreenViewer();
+
+    for (const userId of Array.from(popoutWindows.keys())) {
+        closeScreenPopout(userId);
+    }
+    remoteAudioStreams.clear();
+    remoteScreenStreams.clear();
+    localScreenSenders.clear();
+
     if (currentVoiceRoomId && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'leave_room', room_id: currentVoiceRoomId }));
     }
-    
+
     playVoiceEventSound('leave');
     peerConnections.forEach((_, uid) => closePeerConnection(uid));
     const leftRoomId = currentVoiceRoomId;
@@ -3827,6 +4843,7 @@ function leaveVoiceRoom() {
     }
     renderVoiceRooms();
     renderVoiceParticipantsGrid();
+    renderScreenShareGrid();
 }
 
 function createPeerConnection(targetUserId) {
@@ -3836,7 +4853,8 @@ function createPeerConnection(targetUserId) {
         iceCandidatePoolSize: 10,
         iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
     });
-    (processedOutboundStream || localStream).getTracks().forEach(track => {
+
+    (processedOutboundStream || localStream).getTracks().forEach((track) => {
         const sender = pc.addTrack(track, (processedOutboundStream || localStream));
         const params = sender.getParameters();
         if (!params.encodings) params.encodings = [{}];
@@ -3844,21 +4862,74 @@ function createPeerConnection(targetUserId) {
         params.encodings[0].priority = "high";
         sender.setParameters(params).catch(() => {});
     });
+
+    if (localScreenStream) {
+        attachLocalScreenTrackToPeer(targetUserId, pc).catch(() => {});
+    }
+
     pc.onicecandidate = (event) => {
         if (event.candidate && ws && currentVoiceRoomId) {
-            ws.send(JSON.stringify({ type: 'rtc_ice', room_id: currentVoiceRoomId, target_user_id: targetUserId, payload: event.candidate }));
+            ws.send(JSON.stringify({
+                type: 'rtc_ice',
+                room_id: currentVoiceRoomId,
+                target_user_id: targetUserId,
+                payload: event.candidate,
+            }));
         }
     };
+
     pc.ontrack = (event) => {
-        const audio = document.getElementById(`remote-audio-${targetUserId}`) || document.createElement('audio');
-        audio.id = `remote-audio-${targetUserId}`;
-        audio.autoplay = true;
-        audio.srcObject = event.streams[0];
-        const participantVolume = participantVolumes[targetUserId] ?? 1;
-        audio.volume = Math.max(0, Math.min(2, participantVolume * headphonesGainValue));
-        audio.muted = isDeafened;
-        document.body.appendChild(audio);
+        if (event.track.kind === 'audio') {
+            let remoteStream = remoteAudioStreams.get(targetUserId);
+            if (!remoteStream) {
+                remoteStream = new MediaStream();
+                remoteAudioStreams.set(targetUserId, remoteStream);
+            }
+            remoteStream.addTrack(event.track);
+
+            const audio = document.getElementById(`remote-audio-${targetUserId}`) || document.createElement('audio');
+            audio.id = `remote-audio-${targetUserId}`;
+            audio.autoplay = true;
+            audio.srcObject = remoteStream;
+            const participantVolume = participantVolumes[targetUserId] ?? 1;
+            audio.volume = Math.max(0, Math.min(2, participantVolume * headphonesGainValue));
+            audio.muted = isDeafened;
+            document.body.appendChild(audio);
+
+            event.track.onended = () => {
+                const stream = remoteAudioStreams.get(targetUserId);
+                if (!stream) return;
+                stream.removeTrack(event.track);
+                if (stream.getAudioTracks().length > 0) return;
+                remoteAudioStreams.delete(targetUserId);
+                const remoteAudio = document.getElementById(`remote-audio-${targetUserId}`);
+                if (remoteAudio) {
+                    remoteAudio.remove();
+                }
+            };
+            return;
+        }
+
+        if (event.track.kind === 'video') {
+            const stream = new MediaStream([event.track]);
+            remoteScreenStreams.set(targetUserId, { stream, track: event.track });
+            event.track.onended = () => {
+                remoteScreenStreams.delete(targetUserId);
+                closeScreenPopout(targetUserId);
+                if (activeScreenViewerUserId === targetUserId) {
+                    closeScreenViewer();
+                }
+                renderScreenShareGrid();
+            };
+
+            if (activeScreenViewerUserId === targetUserId && screenViewerVideo) {
+                screenViewerVideo.srcObject = stream;
+            }
+
+            renderScreenShareGrid();
+        }
     };
+
     peerConnections.set(targetUserId, pc);
     return pc;
 }
@@ -3866,21 +4937,49 @@ function createPeerConnection(targetUserId) {
 function closePeerConnection(userId) {
     const pc = peerConnections.get(userId);
     if (pc) pc.close();
+
     peerConnections.delete(userId);
+    peerRenegotiationLocks.delete(userId);
+    localScreenSenders.delete(userId);
+
     const audio = document.getElementById(`remote-audio-${userId}`);
     if (audio) audio.remove();
+
+    remoteAudioStreams.delete(userId);
+    remoteScreenStreams.delete(userId);
+    closeScreenPopout(userId);
+    if (activeScreenViewerUserId === userId) {
+        closeScreenViewer();
+    }
+    renderScreenShareGrid();
 }
 
 async function ensurePeerConnections() {
     if (!currentVoiceRoomId || !localStream) return;
-    const others = voiceParticipants.filter(p => p.user_id !== currentUser.id);
-    for (const p of others) {
-        if (peerConnections.has(p.user_id)) continue;
-        const pc = createPeerConnection(p.user_id);
-        if (currentUser.id < p.user_id) {
+    const others = voiceParticipants.filter((participant) => participant.user_id !== currentUser.id);
+
+    for (const participant of others) {
+        if (peerConnections.has(participant.user_id)) {
+            if (localScreenStream && !localScreenSenders.has(participant.user_id)) {
+                const existingPc = peerConnections.get(participant.user_id);
+                if (existingPc) {
+                    await attachLocalScreenTrackToPeer(participant.user_id, existingPc);
+                    await renegotiatePeerConnection(participant.user_id);
+                }
+            }
+            continue;
+        }
+
+        const pc = createPeerConnection(participant.user_id);
+        if (currentUser.id < participant.user_id) {
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            ws.send(JSON.stringify({ type: 'rtc_offer', room_id: currentVoiceRoomId, target_user_id: p.user_id, payload: offer }));
+            ws.send(JSON.stringify({
+                type: 'rtc_offer',
+                room_id: currentVoiceRoomId,
+                target_user_id: participant.user_id,
+                payload: offer,
+            }));
         }
     }
 }
@@ -3971,7 +5070,75 @@ createVoiceRoomBtn.addEventListener('click', () => openModal('voice'));
 
 toggleMicBtn.addEventListener('click', () => setMute(!isMuted));
 toggleDeafenBtn.addEventListener('click', () => setDeafen(!isDeafened));
+if (toggleScreenShareBtn) {
+    toggleScreenShareBtn.addEventListener('click', () => {
+        if (localScreenStream) {
+            stopScreenShare({ notifyServer: true, renegotiate: true }).catch(() => {});
+            return;
+        }
+        openScreenShareModal();
+    });
+}
 leaveVoiceBtn.addEventListener('click', () => leaveVoiceRoom());
+
+if (pickScreenSourceBtn) {
+    pickScreenSourceBtn.addEventListener('click', () => {
+        pickScreenShareSource().catch(() => {});
+    });
+}
+
+if (startScreenShareBtn) {
+    startScreenShareBtn.addEventListener('click', () => {
+        startScreenShareFromPending().catch(() => {});
+    });
+}
+
+if (cancelScreenShareBtn) {
+    cancelScreenShareBtn.addEventListener('click', () => closeScreenShareModal());
+}
+if (closeScreenShareModalBtn) {
+    closeScreenShareModalBtn.addEventListener('click', () => closeScreenShareModal());
+}
+if (screenShareModal) {
+    screenShareModal.addEventListener('click', (event) => {
+        if (event.target === screenShareModal) {
+            closeScreenShareModal();
+        }
+    });
+}
+
+if (closeScreenViewerModalBtn) {
+    closeScreenViewerModalBtn.addEventListener('click', () => closeScreenViewer());
+}
+if (screenViewerModal) {
+    screenViewerModal.addEventListener('click', (event) => {
+        if (event.target === screenViewerModal) {
+            closeScreenViewer();
+        }
+    });
+}
+if (screenViewerPopoutBtn) {
+    screenViewerPopoutBtn.addEventListener('click', () => {
+        if (!activeScreenViewerUserId) return;
+        openScreenPopout(activeScreenViewerUserId);
+    });
+}
+if (screenViewerPipBtn) {
+    screenViewerPipBtn.addEventListener('click', async () => {
+        if (!screenViewerVideo) return;
+        await togglePictureInPicture(screenViewerVideo);
+    });
+}
+
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (screenShareModal?.classList.contains('active')) {
+        closeScreenShareModal();
+    }
+    if (screenViewerModal?.classList.contains('active')) {
+        closeScreenViewer();
+    }
+});
 
 // Voice overlay collapse functionality
 let isVoiceOverlayCollapsed = false;
@@ -3985,28 +5152,44 @@ collapseVoiceBtn.addEventListener('click', () => {
     }
 });
 
-function updateCollapsedParticipants() {
-    if (!voiceCollapsedParticipants) return;
-    
-    const cards = voiceParticipantsGrid?.querySelectorAll('.voice-participant-card') || [];
-    voiceCollapsedParticipants.innerHTML = '';
-    
-    cards.forEach(card => {
-        const username = card.querySelector('.voice-participant-name')?.textContent || 'User';
-        const isSpeaking = card.classList.contains('speaking');
-        const initial = username.charAt(0).toUpperCase();
-        
-        const collapsedEl = document.createElement('div');
-        collapsedEl.className = `voice-collapsed-participant${isSpeaking ? ' speaking' : ''}`;
-        collapsedEl.innerHTML = `<span class="avatar">${initial}</span><span class="name">${username}</span>`;
-        voiceCollapsedParticipants.appendChild(collapsedEl);
+// Voice overlay toggle button functionality
+const voiceToggleBtn = document.getElementById('voiceToggleBtn');
+let isVoiceOverlayVisible = false;
+
+if (voiceToggleBtn) {
+    voiceToggleBtn.addEventListener('click', () => {
+        isVoiceOverlayVisible = !isVoiceOverlayVisible;
+        voiceOverlay.classList.toggle('visible', isVoiceOverlayVisible);
+        voiceToggleBtn.classList.toggle('active', isVoiceOverlayVisible);
     });
 }
 
+function updateCollapsedParticipants() {
+    if (!voiceCollapsedParticipants) return;
+
+    voiceCollapsedParticipants.innerHTML = voiceParticipants.map((participant) => {
+        const rawName = participant.display_name || participant.username || 'User';
+        const safeName = escapeHtml(rawName);
+        const initial = escapeHtml(rawName.charAt(0).toUpperCase() || 'U');
+        const avatarUrl = withAvatarCacheBuster(
+            normalizeAvatarUrl(participant.avatar_url),
+            participant.user_id
+        );
+        const avatarMarkup = avatarUrl
+            ? `<img src="${escapeHtml(avatarUrl)}" alt="${safeName}" class="voice-collapsed-avatar-img" data-avatar-fallback="${initial}">`
+            : `<span>${initial}</span>`;
+
+        return `<div class="voice-collapsed-participant${participant.speaking ? ' speaking' : ''}"><span class="avatar" data-avatar-fallback-target="1">${avatarMarkup}</span><span class="name">${safeName}</span></div>`;
+    }).join('');
+
+    attachVoiceAvatarFallbacks(voiceCollapsedParticipants);
+}
 if (micVolumeSlider) micVolumeSlider.value = String(Math.round(micGainValue * 100));
 if (headphoneVolumeSlider) headphoneVolumeSlider.value = String(Math.round(headphonesGainValue * 100));
 if (micVolumeValue) micVolumeValue.textContent = `${Math.round(micGainValue * 100)}%`;
 if (headphoneVolumeValue) headphoneVolumeValue.textContent = `${Math.round(headphonesGainValue * 100)}%`;
+updateScreenShareButtonState();
+renderScreenShareGrid();
 
 // ==========================================
 // INITIALIZATION
@@ -4037,8 +5220,18 @@ async function init() {
     // Инициализируем сайдбар пользователей
     initUsersSidebar();
     
-    // Скрываем экран загрузки
-    hideLoadingScreen();
+    // Ждём подключения WebSocket перед скрытием экрана загрузки
+    // Добавляем safety timeout на случай, если WebSocket не подключится
+    const loadingTimeout = setTimeout(() => {
+        console.warn('[Loading] Timeout waiting for WebSocket, proceeding anyway');
+        hideLoadingScreen();
+    }, 15000); // Максимум 15 секунд ожидания
+    
+    wsReady.then(() => {
+        clearTimeout(loadingTimeout);
+        // Скрываем экран загрузки только после подключения WebSocket
+        hideLoadingScreen();
+    });
 }
 
 // Инициализируем экран загрузки
@@ -4393,3 +5586,40 @@ document.addEventListener('click', (e) => {
         handleAdminTabOpen();
     }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
