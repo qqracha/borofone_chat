@@ -145,6 +145,7 @@ def main():
     
     try:
         # Run uvicorn with SSL
+        # max_request_body_size=50MB allows uploading larger GIFs and files
         uvicorn.run(
             "app.main:app",
             host=args.host,
@@ -152,7 +153,13 @@ def main():
             ssl_certfile=cert_file,
             ssl_keyfile=key_file,
             reload=False,  # Disable reload for HTTPS
-            access_log=True
+            access_log=True,
+            limit_concurrency=100,
+            limit_max_requests=1000,
+            timeout_keep_alive=30,
+            # Increase max request body size for file uploads (50MB)
+            http_max_header_size=65536,
+            max_request_body_size=50 * 1024 * 1024
         )
     finally:
         # Cleanup temporary files
