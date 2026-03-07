@@ -2893,6 +2893,14 @@ function connectWebSocket() {
                         if (participant) participant.speaking = data.speaking;
                         renderVoiceParticipantsGrid();
                     }
+                } else if (data.type === 'screen_share_updated') {
+                    if (data.room_id === currentVoiceRoomId) {
+                        voiceParticipants = upsertVoiceParticipant(data.participant);
+                        voiceRoomParticipantsByRoom[data.room_id] = voiceParticipants;
+                        renderVoiceParticipantsGrid();
+                        handleParticipantScreenShareState(data.participant);
+                        renderScreenShareGrid();
+                    }
                 } else if (data.type === 'rtc_offer') {
                     handleRtcOffer(data);
                 } else if (data.type === 'rtc_answer') {

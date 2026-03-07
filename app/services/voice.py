@@ -16,6 +16,7 @@ class VoiceParticipant:
     muted: bool = False
     deafened: bool = False
     speaking: bool = False
+    screen_sharing: bool = False
 
 
 class VoiceRuntime:
@@ -77,7 +78,7 @@ class VoiceRuntime:
                 self._rooms.pop(room_id, None)
             return participant
 
-    async def update_state(self, room_id: int, user_id: int, *, muted: bool | None = None, deafened: bool | None = None, speaking: bool | None = None) -> VoiceParticipant | None:
+    async def update_state(self, room_id: int, user_id: int, *, muted: bool | None = None, deafened: bool | None = None, speaking: bool | None = None, screen_sharing: bool | None = None) -> VoiceParticipant | None:
         async with self._lock:
             participant = self._rooms.get(room_id, {}).get(user_id)
             if not participant:
@@ -88,6 +89,8 @@ class VoiceRuntime:
                 participant.deafened = deafened
             if speaking is not None:
                 participant.speaking = speaking
+            if screen_sharing is not None:
+                participant.screen_sharing = screen_sharing
             return participant
 
     async def participants_snapshot(self, room_id: int) -> list[dict]:
@@ -124,6 +127,7 @@ class VoiceRuntime:
             "muted": participant.muted,
             "deafened": participant.deafened,
             "speaking": participant.speaking,
+            "screen_sharing": participant.screen_sharing,
         }
 
 

@@ -329,6 +329,21 @@ async def global_websocket_endpoint(
                         await broadcast_voice(room_id, {"type": "speaking", "room_id": room_id, "user_id": user_id, "speaking": speaking})
                     continue
 
+                # Screen sharing
+                if msg_type == "set_screen_share":
+                    room_id = data.get("room_id")
+                    sharing = bool(data.get("sharing"))
+                    participant = await voice_runtime.update_state(room_id, user_id, screen_sharing=sharing)
+                    if participant:
+                        await broadcast_voice(room_id, {
+                            "type": "screen_share_updated",
+                            "room_id": room_id,
+                            "user_id": user_id,
+                            "screen_sharing": sharing,
+                            "participant": voice_runtime._as_dict(participant),
+                        })
+                    continue
+
                 # Typing indicator
                 if msg_type == "typing":
                     room_id = data.get("room_id")
