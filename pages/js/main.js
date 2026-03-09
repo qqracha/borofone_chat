@@ -5609,13 +5609,13 @@ async function ensureLocalStream() {
     if (localStream) return localStream;
     localStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-            echoCancellation: true,
+            echoCancellation: false,
             noiseSuppression: true,
-            autoGainControl: true,
+            autoGainControl: false,
             channelCount: 1,
             sampleRate: 48000,
             sampleSize: 16,
-            latency: 0.02,
+            latency: 0.01,
         },
         video: false,
     });
