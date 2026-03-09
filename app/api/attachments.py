@@ -27,6 +27,8 @@ ALLOWED_MIME_TYPES = {
     "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
     # Videos
     "video/mp4", "video/webm", "video/ogg",
+    # Audio
+    "audio/mpeg", "audio/wav", "audio/ogg",
     # Documents
     "application/pdf",
     "application/msword",  # .doc
