@@ -888,17 +888,11 @@ const profileMessageSound = new Audio('./sounds/net-idi-na.mp3');
 profileMessageSound.preload = 'auto';
 
 const participantVolumes = JSON.parse(localStorage.getItem('participantVolumes') || "{}");
-const noiseSuppressionStorageKey = 'voiceNoiseSuppressionEnabled';
 let micGainValue = 1;
 let headphonesGainValue = 2;
 let micAudioContext = null;
 let micGainNode = null;
 let processedOutboundStream = null;
-let noiseSuppressionEnabled = localStorage.getItem(noiseSuppressionStorageKey) !== 'false';
-let micOutputDestination = null;
-let micPresenceAnalyser = null;
-let micPresenceData = null;
-let presenceCompensationNode = null;
 
 // Web Audio GainNodes for remote participants (allows gain > 1.0 unlike audio.volume)
 const remoteAudioGainNodes = new Map(); // userId -> { audioCtx, gainNode }
@@ -1230,8 +1224,6 @@ const micVolumeSlider = document.getElementById('micVolumeSlider');
 const headphoneVolumeSlider = document.getElementById('headphoneVolumeSlider');
 const micVolumeValue = document.getElementById('micVolumeValue');
 const headphoneVolumeValue = document.getElementById('headphoneVolumeValue');
-const noiseSuppressionToggle = document.getElementById('noiseSuppressionToggle');
-const noiseSuppressionState = document.getElementById('noiseSuppressionState');
 
 const screenShareModal = document.getElementById('screenShareModal');
 const closeScreenShareModalBtn = document.getElementById('closeScreenShareModalBtn');
@@ -3625,181 +3617,6 @@ micVolumeSlider?.addEventListener('input', () => {
     if (micVolumeValue) micVolumeValue.textContent = `${micVolumeSlider.value}%`;
 });
 
-function updateNoiseSuppressionUi() {
-    if (noiseSuppressionToggle) {
-        noiseSuppressionToggle.checked = noiseSuppressionEnabled;
-    }
-    if (noiseSuppressionState) {
-        noiseSuppressionState.textContent = noiseSuppressionEnabled ? 'On' : 'Off';
-    }
-}
-
-function stopPresenceCompensationLoop() {
-    micPresenceAnalyser = null;
-    micPresenceData = null;
-    presenceCompensationNode = null;
-}
-
-function buildProcessedMicStream(stream) {
-    if (processedOutboundStream) {
-        processedOutboundStream.getTracks().forEach((track) => track.stop());
-    }
-    stopPresenceCompensationLoop();
-    if (micAudioContext && micAudioContext.state !== 'closed') {
-        micAudioContext.close().catch(() => {});
-    }
-
-    micAudioContext = new AudioContext();
-    const source = micAudioContext.createMediaStreamSource(stream);
-    micGainNode = micAudioContext.createGain();
-    micGainNode.gain.value = micGainValue;
-
-    if (noiseSuppressionEnabled) {
-        const highpassFilter = micAudioContext.createBiquadFilter();
-        highpassFilter.type = 'highpass';
-        highpassFilter.frequency.value = 95;
-        highpassFilter.Q.value = 0.71;
-
-        const lowShelfFilter = micAudioContext.createBiquadFilter();
-        lowShelfFilter.type = 'lowshelf';
-        lowShelfFilter.frequency.value = 160;
-        lowShelfFilter.gain.value = -4;
-
-        const keyboardNotch = micAudioContext.createBiquadFilter();
-        keyboardNotch.type = 'peaking';
-        keyboardNotch.frequency.value = 2600;
-        keyboardNotch.Q.value = 1.1;
-        keyboardNotch.gain.value = -3.5;
-
-        const hissShelf = micAudioContext.createBiquadFilter();
-        hissShelf.type = 'highshelf';
-        hissShelf.frequency.value = 4200;
-        hissShelf.gain.value = -4.5;
-
-        const speechPresence = micAudioContext.createBiquadFilter();
-        speechPresence.type = 'peaking';
-        speechPresence.frequency.value = 1850;
-        speechPresence.Q.value = 0.85;
-        speechPresence.gain.value = 1.6;
-
-        const softCompressor = micAudioContext.createDynamicsCompressor();
-        softCompressor.threshold.value = -16;
-        softCompressor.knee.value = 10;
-        softCompressor.ratio.value = 1.5;
-        softCompressor.attack.value = 0.003;
-        softCompressor.release.value = 0.08;
-
-        const presenceCompensation = micAudioContext.createGain();
-        presenceCompensation.gain.value = 1.04;
-        presenceCompensationNode = presenceCompensation;
-
-        micPresenceAnalyser = micAudioContext.createAnalyser();
-        micPresenceAnalyser.fftSize = 1024;
-        micPresenceAnalyser.smoothingTimeConstant = 0.75;
-        micPresenceData = new Uint8Array(micPresenceAnalyser.frequencyBinCount);
-
-        source.connect(highpassFilter);
-        highpassFilter.connect(lowShelfFilter);
-        lowShelfFilter.connect(keyboardNotch);
-        keyboardNotch.connect(hissShelf);
-        hissShelf.connect(speechPresence);
-        speechPresence.connect(softCompressor);
-        softCompressor.connect(presenceCompensation);
-        presenceCompensation.connect(micGainNode);
-        speechPresence.connect(micPresenceAnalyser);
-
-        const updatePresenceCompensation = () => {
-            if (!noiseSuppressionEnabled || !micPresenceAnalyser || !presenceCompensationNode || !micAudioContext || micAudioContext.state === 'closed') {
-                return;
-            }
-
-            micPresenceAnalyser.getByteFrequencyData(micPresenceData);
-            const sampleRate = micAudioContext.sampleRate || 48000;
-            const binSize = sampleRate / (micPresenceAnalyser.fftSize * 2);
-            const startBin = Math.max(1, Math.floor(1400 / binSize));
-            const endBin = Math.min(micPresenceData.length - 1, Math.ceil(3200 / binSize));
-
-            let speechBandEnergy = 0;
-            let total = 0;
-            for (let i = startBin; i <= endBin; i++) {
-                speechBandEnergy += micPresenceData[i];
-                total += 1;
-            }
-
-            const avgSpeechBand = total ? speechBandEnergy / total : 0;
-            const targetGain = avgSpeechBand > 24 ? 1.08 : 1.03;
-            presenceCompensationNode.gain.cancelScheduledValues(micAudioContext.currentTime);
-            presenceCompensationNode.gain.setTargetAtTime(targetGain, micAudioContext.currentTime, 0.05);
-            requestAnimationFrame(updatePresenceCompensation);
-        };
-
-        requestAnimationFrame(updatePresenceCompensation);
-    } else {
-        source.connect(micGainNode);
-    }
-
-    micOutputDestination = micAudioContext.createMediaStreamDestination();
-    micGainNode.connect(micOutputDestination);
-    processedOutboundStream = micOutputDestination.stream;
-}
-
-async function rebuildLocalVoiceStream() {
-    if (!localStream) return;
-
-    const previousTrack = localStream.getAudioTracks()[0] || null;
-    const previousEnabled = previousTrack ? previousTrack.enabled : !isMuted;
-
-    try {
-        const nextStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                echoCancellation: false,
-                noiseSuppression: false,
-                autoGainControl: false,
-                channelCount: 1,
-                sampleRate: 48000,
-                sampleSize: 16,
-                latency: 0.01,
-            },
-            video: false,
-        });
-
-        const nextTrack = nextStream.getAudioTracks()[0] || null;
-        if (!nextTrack) {
-            nextStream.getTracks().forEach((track) => track.stop());
-            return;
-        }
-
-        nextTrack.enabled = previousEnabled;
-
-        if (localStream) {
-            localStream.getTracks().forEach((track) => track.stop());
-        }
-
-        localStream = nextStream;
-        buildProcessedMicStream(localStream);
-
-        const outboundTrack = processedOutboundStream.getAudioTracks()[0] || nextTrack;
-        peerConnections.forEach((pc) => {
-            const sender = pc.getSenders().find((item) => item.track?.kind === 'audio');
-            if (sender) {
-                sender.replaceTrack(outboundTrack).catch(() => {});
-            }
-        });
-    } catch (_) {
-        noiseSuppressionEnabled = !noiseSuppressionEnabled;
-        localStorage.setItem(noiseSuppressionStorageKey, String(noiseSuppressionEnabled));
-        updateNoiseSuppressionUi();
-        showNotification('Failed to update noise suppression', 'error');
-    }
-}
-
-noiseSuppressionToggle?.addEventListener('change', async () => {
-    noiseSuppressionEnabled = noiseSuppressionToggle.checked;
-    localStorage.setItem(noiseSuppressionStorageKey, String(noiseSuppressionEnabled));
-    updateNoiseSuppressionUi();
-    await rebuildLocalVoiceStream();
-});
-
 headphoneVolumeSlider?.addEventListener('input', () => {
     headphonesGainValue = Number(headphoneVolumeSlider.value) / 100;
     if (headphoneVolumeValue) headphoneVolumeValue.textContent = `${headphoneVolumeSlider.value}%`;
@@ -5792,18 +5609,24 @@ async function ensureLocalStream() {
     if (localStream) return localStream;
     localStream = await navigator.mediaDevices.getUserMedia({
         audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
             channelCount: 1,
             sampleRate: 48000,
             sampleSize: 16,
-            latency: 0.01,
+            latency: 0.02,
         },
         video: false,
     });
 
-    buildProcessedMicStream(localStream);
+    micAudioContext = new AudioContext();
+    const source = micAudioContext.createMediaStreamSource(localStream);
+    micGainNode = micAudioContext.createGain();
+    micGainNode.gain.value = micGainValue;
+    const destination = micAudioContext.createMediaStreamDestination();
+    source.connect(micGainNode).connect(destination);
+    processedOutboundStream = destination.stream;
 
     return localStream;
 }
@@ -6082,14 +5905,40 @@ function startSpeakingDetector() {
     if (speakingInterval || !localStream) return;
     const ctx = new AudioContext();
     const analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.85;
     const source = ctx.createMediaStreamSource(localStream);
     source.connect(analyser);
     const data = new Uint8Array(analyser.fftSize);
+    let smoothedLevel = 0;
+    let speechHangUntil = 0;
+    const startThreshold = 7.5;
+    const stopThreshold = 4.5;
+    const holdMs = 350;
     speakingInterval = setInterval(() => {
         analyser.getByteTimeDomainData(data);
         let sum = 0;
         for (let i = 0; i < data.length; i++) sum += Math.abs(data[i] - 128);
-        const speaking = !isMuted && (sum / data.length > 4);
+        const averageLevel = sum / data.length;
+        smoothedLevel = (smoothedLevel * 0.82) + (averageLevel * 0.18);
+        const now = Date.now();
+        let speaking = lastSpeakingState;
+
+        if (!isMuted) {
+            if (!lastSpeakingState && smoothedLevel >= startThreshold) {
+                speaking = true;
+                speechHangUntil = now + holdMs;
+            } else if (lastSpeakingState) {
+                if (smoothedLevel >= stopThreshold) {
+                    speechHangUntil = now + holdMs;
+                } else if (now > speechHangUntil) {
+                    speaking = false;
+                }
+            }
+        } else {
+            speaking = false;
+        }
+
         if (speaking === lastSpeakingState) return;
         lastSpeakingState = speaking;
         if (ws && currentVoiceRoomId) ws.send(JSON.stringify({ type: 'speaking', room_id: currentVoiceRoomId, speaking }));
@@ -6226,7 +6075,6 @@ if (micVolumeSlider) micVolumeSlider.value = String(Math.round(micGainValue * 10
 if (headphoneVolumeSlider) headphoneVolumeSlider.value = String(Math.round(headphonesGainValue * 100));
 if (micVolumeValue) micVolumeValue.textContent = `${Math.round(micGainValue * 100)}%`;
 if (headphoneVolumeValue) headphoneVolumeValue.textContent = `${Math.round(headphonesGainValue * 100)}%`;
-updateNoiseSuppressionUi();
 updateScreenShareButtonState();
 renderScreenShareGrid();
 
