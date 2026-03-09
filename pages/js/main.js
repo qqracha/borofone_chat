@@ -3651,9 +3651,10 @@ function startNoiseGateLoop(sourceNode, gateNode) {
     noiseGateData = new Uint8Array(noiseGateAnalyser.fftSize);
     sourceNode.connect(noiseGateAnalyser);
 
-    let smoothedLevel = 0;
-    let floorLevel = 0.003;
-    let wasOpen = false;
+        let smoothedLevel = 0;
+        let floorLevel = 0.0025;
+        let gateHoldUntil = 0;
+        let gateState = 'closed';
 
     const tick = () => {
         if (!noiseSuppressionEnabled || !noiseGateAnalyser || !gateNode || !micAudioContext || micAudioContext.state === 'closed') {
@@ -3672,13 +3673,23 @@ function startNoiseGateLoop(sourceNode, gateNode) {
         smoothedLevel = smoothedLevel * 0.82 + rms * 0.18;
         floorLevel = Math.min(0.02, floorLevel * 0.995 + smoothedLevel * 0.005);
 
-        const openThreshold = Math.max(0.010, floorLevel * 2.6);
-        const closeThreshold = Math.max(0.007, floorLevel * 1.8);
-        const targetGain = smoothedLevel > (wasOpen ? closeThreshold : openThreshold) ? 1 : 0.06;
-        wasOpen = targetGain > 0.5;
+        const now = micAudioContext.currentTime;
+        const openThreshold = Math.max(0.0085, floorLevel * 2.15);
+        const closeThreshold = Math.max(0.0055, floorLevel * 1.35);
+
+        if (smoothedLevel >= openThreshold) {
+            gateState = 'open';
+            gateHoldUntil = now + 0.22;
+        } else if (now < gateHoldUntil || smoothedLevel >= closeThreshold) {
+            gateState = 'hold';
+        } else {
+            gateState = 'closed';
+        }
+
+        const targetGain = gateState === 'closed' ? 0.16 : 1;
 
         gateNode.gain.cancelScheduledValues(micAudioContext.currentTime);
-        gateNode.gain.setTargetAtTime(targetGain, micAudioContext.currentTime, wasOpen ? 0.008 : 0.03);
+        gateNode.gain.setTargetAtTime(targetGain, micAudioContext.currentTime, gateState === 'closed' ? 0.055 : 0.012);
 
         noiseGateAnimationFrame = requestAnimationFrame(tick);
     };
