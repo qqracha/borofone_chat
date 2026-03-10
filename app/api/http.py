@@ -11,7 +11,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.dependencies import get_current_user, require_admin
 from app.infra.db import get_db
-from app.infra.redis import get_redis
+from app.infra.redis import get_redis, room_events_channel
 from app.models import Message, MessageReaction, Room, User
 from app.schemas.messages import (
     AttachmentResponse,
@@ -180,7 +180,7 @@ async def toggle_reaction(
     }
     if redis:
         try:
-            await redis.publish(f"room:{room_id}", json.dumps({**reaction_event, "reactions": broadcast_reactions}))
+            await redis.publish(room_events_channel(room_id), json.dumps({**reaction_event, "reactions": broadcast_reactions}))
         except Exception:
             pass
     return reaction_event
@@ -214,7 +214,7 @@ async def delete_message(
     }
     if redis:
         try:
-            await redis.publish(f"room:{room_id}", json.dumps(event))
+            await redis.publish(room_events_channel(room_id), json.dumps(event))
         except Exception:
             pass
     return event

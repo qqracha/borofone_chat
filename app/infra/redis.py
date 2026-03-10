@@ -19,6 +19,23 @@ from app.settings import settings
 
 logger = logging.getLogger(__name__)
 
+
+def redis_namespace_prefix() -> str:
+    return f'borofone:{settings.runtime_namespace}'
+
+
+def redis_key(*parts: object) -> str:
+    suffix = ':'.join(str(part) for part in parts if part is not None and str(part) != '')
+    return f'{redis_namespace_prefix()}:{suffix}' if suffix else redis_namespace_prefix()
+
+
+def room_events_channel(room_id: int) -> str:
+    return redis_key('room', room_id, 'events')
+
+
+def room_presence_key(room_id: int) -> str:
+    return redis_key('room', room_id, 'online')
+
 # ==========================================
 # CONNECTION POOL - создаётся лениво
 # ==========================================

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.db import get_db
+from app.infra.redis import room_events_channel
 from app.models import User, Room
 from app.schemas.messages import MessageCreate
 from app.security import get_user_id_from_token
@@ -93,7 +94,7 @@ async def global_websocket_endpoint(
 
             # Подписываемся на каждую комнату
             for room in rooms:
-                await pubsub.subscribe(f"room:{room.id}")
+                await pubsub.subscribe(room_events_channel(room.id))
 
             print(f"[WS] {username} subscribed to {len(rooms)} rooms")
         except Exception as e:
@@ -145,7 +146,7 @@ async def global_websocket_endpoint(
 
                     if redis:
                         try:
-                            await redis.publish(f"room:{room_id}", json.dumps(message_data))
+                            await redis.publish(room_events_channel(room_id), json.dumps(message_data))
                         except Exception as e:
                             print(f"[WS] Publish failed: {e}")
                     else:

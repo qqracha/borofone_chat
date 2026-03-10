@@ -81,6 +81,8 @@ async def app_config_js() -> Response:
             'avatarsBasePath': settings.avatar_public_path,
             'attachmentsBasePath': settings.attachments_public_path,
         },
+        'appEnv': settings.app_env,
+        'storageNamespace': settings.runtime_namespace,
     }
     return Response(
         content=f'window.__BOROFONE_RUNTIME_CONFIG__ = {json.dumps(payload, ensure_ascii=False)};\n',

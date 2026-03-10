@@ -13,7 +13,16 @@
  */
 
 // ── Do Not Disturb (DND) Mode ─────────────────────────────────────────
-const DND_STORAGE_KEY = 'doNotDisturb';
+function getStorageNamespace() {
+    const rawNamespace = window.BOROFONE_CONFIG?.storageNamespace
+        || window.BOROFONE_CONFIG?.apiUrl
+        || window.API_URL
+        || window.location.origin;
+    return String(rawNamespace).replace(/[^a-zA-Z0-9_.-]+/g, '_');
+}
+
+const STORAGE_NAMESPACE = getStorageNamespace();
+const DND_STORAGE_KEY = `doNotDisturb:${STORAGE_NAMESPACE}`;
 
 /**
  * Получить состояние режима "Не беспокоить".
@@ -96,7 +105,7 @@ function playNotificationSound() {
  * }
  */
 
-const STORAGE_KEY = 'lastReadMessage';
+const STORAGE_KEY = `lastReadMessage:${STORAGE_NAMESPACE}`;
 
 /**
  * Получить ID последнего прочитанного сообщения в комнате.
