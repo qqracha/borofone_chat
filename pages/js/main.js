@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 // ==========================================
 // API CONFIGURATION
 // ==========================================
@@ -7227,3 +7228,7 @@ document.addEventListener('click', (e) => {
 
 
 
+=======
+// Split into pages/js/main/*.js.
+// main.html loads the section files in order.
+>>>>>>> Stashed changes
