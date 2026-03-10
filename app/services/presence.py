@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.infra.redis import room_presence_key
 from app.models import User
 
 
@@ -25,9 +26,9 @@ async def user_joined_room(redis: Redis | None, room_id: int, user_id: int) -> N
         return
     
     try:
-        await redis.sadd(f"room:{room_id}:online", str(user_id))
+        await redis.sadd(room_presence_key(room_id), str(user_id))
         # TTL 30 секунд — если пользователь не обновит, считается оффлайн
-        await redis.expire(f"room:{room_id}:online", 30)
+        await redis.expire(room_presence_key(room_id), 30)
     except Exception as e:
         print(f"[Presence] Error joining room: {e}")
 
@@ -42,7 +43,7 @@ async def user_left_room(redis: Redis | None, room_id: int, user_id: int) -> Non
         return
     
     try:
-        await redis.srem(f"room:{room_id}:online", str(user_id))
+        await redis.srem(room_presence_key(room_id), str(user_id))
     except Exception as e:
         print(f"[Presence] Error leaving room: {e}")
 
@@ -58,7 +59,7 @@ async def get_online_users(redis: Redis | None, room_id: int) -> list[int]:
         return []
     
     try:
-        members = await redis.smembers(f"room:{room_id}:online")
+        members = await redis.smembers(room_presence_key(room_id))
         return [int(m) for m in members]
     except Exception as e:
         print(f"[Presence] Error getting online users: {e}")
@@ -76,10 +77,10 @@ async def heartbeat_room(redis: Redis | None, room_id: int, user_id: int) -> Non
     
     try:
         # Проверяем что пользователь в set
-        is_member = await redis.sismember(f"room:{room_id}:online", str(user_id))
+        is_member = await redis.sismember(room_presence_key(room_id), str(user_id))
         if is_member:
             # Продляем TTL
-            await redis.expire(f"room:{room_id}:online", 30)
+            await redis.expire(room_presence_key(room_id), 30)
     except Exception as e:
         print(f"[Presence] Error heartbeat: {e}")
 
@@ -279,7 +280,7 @@ async def check_and_update_offline_users(db: AsyncSession, redis: Redis | None) 
                     room_ids = rooms_result.scalars().all()
                     
                     for room_id in room_ids:
-                        is_member = await redis.sismember(f"room:{room_id}:online", str(user.id))
+                        is_member = await redis.sismember(room_presence_key(room_id), str(user.id))
                         if is_member:
                             found_online = True
                             break

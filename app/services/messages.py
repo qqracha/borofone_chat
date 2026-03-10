@@ -16,7 +16,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload, joinedload
 
-from app.infra.redis import get_redis_client
+from app.infra.redis import get_redis_client, redis_key
 from app.models import Message, Attachment
 from app.schemas.messages import MessageCreate
 
@@ -29,7 +29,7 @@ PENDING = "PENDING"
 
 def _nonce_key(user_id: int, nonce: str) -> str:
     """Generate Redis key for nonce."""
-    return f"nonce:{user_id}:{nonce}"
+    return redis_key("nonce", user_id, nonce)
 
 
 # Discord-like deduplication message by nonce, docs for more info.

@@ -1,0 +1,81 @@
+// ==========================================
+// BADGES & NOTIFICATIONS
+// ==========================================
+
+/**
+ * Обновить badge для конкретной комнаты.
+ */
+function updateRoomBadge(roomId, count) {
+    const roomEl = roomsList.querySelector(`[data-room-id="${roomId}"]`);
+    if (window.notifications) {
+        window.notifications.updateRoomBadge(roomEl, count);
+    }
+}
+
+/**
+ * Увеличить badge комнаты на 1 (когда пришло новое сообщение в неактивную комнату).
+ */
+function incrementRoomBadge(roomId) {
+    const roomEl = roomsList.querySelector(`[data-room-id="${roomId}"]`);
+    if (!roomEl) return;
+
+    const badge = roomEl.querySelector('.unread-badge');
+    const current = badge ? parseInt(badge.textContent) || 0 : 0;
+
+    if (window.notifications) {
+        window.notifications.updateRoomBadge(roomEl, current + 1);
+    }
+}
+
+/**
+ * Отметить текущую комнату как прочитанную (вызывается при отправке сообщения).
+ */
+function markCurrentRoomAsRead() {
+    if (!currentRoom || !window.notifications) return;
+
+    // Берём все сообщения из DOM
+    const messages = Array.from(messagesList.querySelectorAll('[data-message-id]'))
+        .map(el => ({ id: parseInt(el.dataset.messageId) }));
+
+    if (messages.length > 0) {
+        window.notifications.markRoomAsRead(messages, currentRoom.id);
+        updateRoomBadge(currentRoom.id, 0);
+    }
+}
+
+/**
+ * Обновить badge текущей открытой комнаты.
+ */
+function updateCurrentRoomBadge() {
+    if (!currentRoom) return;
+
+    // Получаем все сообщения из DOM
+    const messages = Array.from(messagesList.querySelectorAll('[data-message-id]'))
+        .map(el => ({ id: parseInt(el.dataset.messageId) }));
+
+    if (window.notifications) {
+        const unread = window.notifications.countUnreadMessages(messages, currentRoom.id);
+        updateRoomBadge(currentRoom.id, unread);
+    }
+}
+
+/**
+ * Обновить badges для всех комнат (вызывается после loadRooms).
+ */
+async function updateAllRoomBadges() {
+    if (!window.notifications) return;
+
+    for (const room of rooms) {
+        try {
+            // Загружаем сообщения комнаты (без отображения)
+            const response = await fetchWithAuth(`${getApiUrl()}/rooms/${room.id}/messages`);
+            if (!response.ok) continue;
+
+            const messages = await response.json();
+            const unread = window.notifications.countUnreadMessages(messages, room.id);
+            updateRoomBadge(room.id, unread);
+        } catch (err) {
+            console.warn(`Failed to load messages for room ${room.id}:`, err);
+        }
+    }
+}

@@ -1,7 +1,7 @@
 // Borofone Chat - Service Worker
-const CACHE_NAME = 'borofone-chat-v1';
-const STATIC_CACHE = 'borofone-static-v1';
-const DYNAMIC_CACHE = 'borofone-dynamic-v1';
+const CACHE_NAME = 'borofone-chat-v2';
+const STATIC_CACHE = 'borofone-static-v2';
+const DYNAMIC_CACHE = 'borofone-dynamic-v2';
 
 // Статические ресурсы для кэширования
 const STATIC_ASSETS = [
@@ -13,12 +13,43 @@ const STATIC_ASSETS = [
     '/styles/presence.css',
     '/styles/attachments.css',
     '/styles/wordle.css',
-    '/js/main.js',
     '/js/config.js',
     '/js/auth.js',
     '/js/notifications.js',
     '/js/attachments.js',
     '/js/wordle.js',
+    '/js/app/bootstrap.js',
+    '/js/app/manifest.js',
+    '/js/app/runtime.js',
+    '/js/app/loaders/sequential.js',
+    '/js/app/utils/api.js',
+    '/js/app/utils/text.js',
+    '/js/app/utils/avatar.js',
+    '/js/main/core/config/api-config.js',
+    '/js/main/core/ui/loading-screen.js',
+    '/js/main/core/state/app-state.js',
+    '/js/main/core/ui/tooltips.js',
+    '/js/main/chat/emoji/emoji-picker.js',
+    '/js/main/chat/input/rate-limit-state.js',
+    '/js/main/core/dom/dom-elements.js',
+    '/js/main/core/theme/theme-manager.js',
+    '/js/main/chat/auth/auth-session.js',
+    '/js/main/chat/rooms/room-service.js',
+    '/js/main/chat/messages/message-renderer.js',
+    '/js/main/chat/messages/message-reactions.js',
+    '/js/main/chat/messages/message-scroll.js',
+    '/js/main/chat/input/message-input.js',
+    '/js/main/chat/transport/websocket-client.js',
+    '/js/main/chat/ui/settings-modal.js',
+    '/js/main/chat/ui/ui-events.js',
+    '/js/main/chat/presence/presence-sidebar.js',
+    '/js/main/chat/notifications/room-badges.js',
+    '/js/main/chat/notifications/notification-polling.js',
+    '/js/main/voice/rooms/voice-room-manager.js',
+    '/js/main/core/init/app-init.js',
+    '/js/main/mobile/navigation/mobile-menu.js',
+    '/js/main/mobile/users/mobile-users-sidebar.js',
+    '/js/main/admin/panel/admin-panel.js',
     '/js/tips.js',
     '/login.html',
     '/register.html',

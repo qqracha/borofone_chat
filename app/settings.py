@@ -1,3 +1,4 @@
+import re
 from functools import cached_property
 from pathlib import Path
 
@@ -63,6 +64,12 @@ class Settings(BaseSettings):
     @staticmethod
     def _split_csv(value: str) -> list[str]:
         return [item.strip() for item in value.split(',') if item.strip()]
+
+    @staticmethod
+    def _namespace_part(value: str) -> str:
+        normalized = re.sub(r'[^a-zA-Z0-9_.-]+', '_', value.strip())
+        normalized = normalized.strip('._-')
+        return normalized or 'default'
 
     def _resolve_path(self, raw_path: str) -> Path:
         path = Path(raw_path)
@@ -164,6 +171,17 @@ class Settings(BaseSettings):
                 if value not in origins:
                     origins.append(value)
         return origins
+
+    @property
+    def runtime_namespace(self) -> str:
+        candidates = [
+            self.resolved_public_api_base_url,
+            self.public_base_url.rstrip('/'),
+            self.app_env,
+            f'{self.app_host}:{self.app_port}',
+        ]
+        parts = [self._namespace_part(value) for value in candidates if value]
+        return '__'.join(parts) if parts else 'default'
 
 
 settings = Settings()

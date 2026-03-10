@@ -106,6 +106,10 @@ function initLoadingScreen() {
 
 let currentRoom = null;
 let ws = null;
+let wsConnecting = false;
+const seenIncomingMessageIds = new Set();
+const seenIncomingMessageOrder = [];
+const MAX_SEEN_INCOMING_MESSAGES = 1000;
 let wsReady = Promise.resolve();  // Promise который резолвится когда WS открыт
 
 // Connection stats tracking
@@ -120,6 +124,21 @@ let connectionStats = {
 };
 
 // Add log entry function
+function markIncomingMessageSeen(messageId) {
+    if (!Number.isFinite(messageId)) return false;
+    if (seenIncomingMessageIds.has(messageId)) return true;
+
+    seenIncomingMessageIds.add(messageId);
+    seenIncomingMessageOrder.push(messageId);
+
+    if (seenIncomingMessageOrder.length > MAX_SEEN_INCOMING_MESSAGES) {
+        const oldestId = seenIncomingMessageOrder.shift();
+        seenIncomingMessageIds.delete(oldestId);
+    }
+
+    return false;
+}
+
 function addLogEntry(type, message) {
     const logEntry = {
         type: type,
@@ -3052,7 +3071,7 @@ function handleParticipantScreenShareSound(previousParticipant, nextParticipant)
 
 // Подключаемся к глобальному WS ОДИН РАЗ при загрузке
 function connectWebSocket() {
-    if (ws) return; // уже подключены
+    if (ws || wsConnecting) return; // уже подключены
     
     // Track reconnect if we already had a connection before
     if (connectionStats.connectedAt !== null) {
@@ -3060,15 +3079,30 @@ function connectWebSocket() {
     }
     
     updateConnectionStatus('connecting');
+    wsConnecting = true;
 
     wsReady = new Promise((resolve) => {
         const wsUrl = `${getWsUrl()}/ws`;
         const socket = new WebSocket(wsUrl);
         
         // Таймаут на подключение - 10 секунд
-        const connectionTimeout = setTimeout(() => {
-            console.warn('[WS] Connection timeout, proceeding anyway');
+        let wsResolved = false;
+        const resolveConnection = () => {
+            if (wsResolved) return;
+            wsResolved = true;
             resolve();
+        };
+
+        const connectionTimeout = setTimeout(() => {
+            console.warn('[WS] Connection timeout, closing socket and allowing reconnect');
+            updateConnectionStatus('disconnected');
+            wsConnecting = false;
+            try {
+                socket.close();
+            } catch (closeError) {
+                console.error('[WS] error while closing socket on timeout:', closeError);
+            }
+            resolveConnection();
         }, 10000);
 
         socket.onopen = () => {
@@ -3084,7 +3118,8 @@ function connectWebSocket() {
             addLogEntry(isReconnect ? 'reconnect' : 'connect', isReconnect ? 'Переподключение к серверу' : 'Подключение к серверу');
             
             ws = socket;
-            resolve();
+            wsConnecting = false;
+            resolveConnection();
         };
 
         socket.onmessage = (event) => {
@@ -3092,6 +3127,10 @@ function connectWebSocket() {
                 const data = JSON.parse(event.data);
 
                 if (data.type === 'message') {
+                    if (markIncomingMessageSeen(Number(data.id))) {
+                        return;
+                    }
+
                     // Track received message for stats
                     connectionStats.messagesReceived++;
                     // Если сообщение в ТЕКУЩЕЙ комнате — добавляем в DOM
@@ -3108,15 +3147,16 @@ function connectWebSocket() {
 
                     // Уведомления ТОЛЬКО если сообщение НЕ от меня
                     if (window.notifications && data.user?.id !== currentUser?.id) {
-                        // Звук
-                        window.notifications.playNotificationSound();
+                        const shouldNotify = window.notifications.claimMessageNotification(data.id, data.room_id);
+                        if (shouldNotify) {
+                            window.notifications.playNotificationSound();
 
-                        // Badge
-                        if (data.room_id) {
-                            if (currentRoom && data.room_id === currentRoom.id) {
-                                updateCurrentRoomBadge();
-                            } else {
-                                incrementRoomBadge(data.room_id);
+                            if (data.room_id) {
+                                if (currentRoom && data.room_id === currentRoom.id) {
+                                    updateCurrentRoomBadge();
+                                } else {
+                                    incrementRoomBadge(data.room_id);
+                                }
                             }
                         }
                     }
@@ -3228,13 +3268,18 @@ function connectWebSocket() {
         };
 
         socket.onclose = () => {
+            clearTimeout(connectionTimeout);
             console.log('[WS] disconnected');
             
             // Add log entry for disconnection
             addLogEntry('disconnect', 'Отключение от сервера');
             
             updateConnectionStatus('disconnected');
-            ws = null;
+            if (ws === socket) {
+                ws = null;
+            }
+            wsConnecting = false;
+            resolveConnection();
 
             // Переподключаемся через 3 секунды
             setTimeout(() => connectWebSocket(), 3000);
@@ -3476,22 +3521,22 @@ async function saveSettings() {
     const usernameValue = settingsUsername.value.trim();
 
     if (!displayNameValue) {
-        alert('Nickname �� ����� ���� ������');
+        alert('Никнейм не может быть пустым');
         settingsDisplayName.focus();
         return;
     }
     if (displayNameValue.length > 50) {
-        alert('Nickname ������ ���� �� ������� 50 ��������');
+        alert('Никнейм не должен быть длиннее 50 символов');
         settingsDisplayName.focus();
         return;
     }
     if (usernameValue.length < 3) {
-        alert('Tag ������ ��������� ������� 3 �������');
+        alert('Тег должен содержать минимум 3 символа');
         settingsUsername.focus();
         return;
     }
     if (usernameValue.length > 32) {
-        alert('Tag ������ ���� �� ������� 32 ��������');
+        alert('Тег не должен быть длиннее 32 символов');
         settingsUsername.focus();
         return;
     }
@@ -3525,7 +3570,7 @@ async function saveSettings() {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || '�� ������� ��������� ���������');
+            throw new Error(error.detail || 'Не удалось сохранить настройки');
         }
 
         currentUser = await response.json();
@@ -3543,7 +3588,7 @@ async function saveSettings() {
         }
     } catch (err) {
         console.error('Failed to save settings:', err);
-        alert(err.message || '�� ������� ��������� ���������');
+        alert(err.message || 'Не удалось сохранить настройки');
     }
 }
 async function logout() {
@@ -5130,9 +5175,12 @@ async function startPolling() {
                 if (unreadCount > prevCount) {
                     const lastMessage = messages[messages.length - 1];
 
-                    // Звук только если сообщение не от нас
+                    // Play sound only for a newly observed message from another user
                     if (lastMessage.user?.id !== currentUser?.id) {
-                        window.notifications.playNotificationSound();
+                        const shouldNotify = window.notifications.claimMessageNotification(lastMessage.id, room.id);
+                        if (shouldNotify) {
+                            window.notifications.playNotificationSound();
+                        }
                     }
                 }
 
@@ -6584,9 +6632,9 @@ async function init() {
     // Инициализируем Twemoji для Discord-подобных эмодзи
     if (typeof twemoji !== 'undefined') {
         twemoji.parse(document.body, {
-            base: 'https://twemoji.maxcdn.com/v/latest/',
-            ext: '.svg',
-            size: '36x36'
+            base: 'https://cdn.jsdelivr.net/npm/twemoji@14.0.2/assets/',
+            folder: 'svg',
+            ext: '.svg'
         });
     }
     
@@ -6899,7 +6947,7 @@ async function deleteRoom(roomId) {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to delete room');
+            throw new Error(error.detail || 'Не удалось удалить комнату');
         }
         
         adminNotify('Комната удалена', 'success');
@@ -6942,7 +6990,7 @@ async function adminCreateRoom() {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to create room');
+            throw new Error(error.detail || 'Не удалось создать комнату');
         }
         
         const room = await response.json();
@@ -7071,7 +7119,7 @@ async function createInvite() {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to create invite');
+            throw new Error(error.detail || 'Не удалось создать пригласительный код');
         }
         
         const invite = await response.json();
@@ -7103,7 +7151,7 @@ async function revokeInvite(inviteId) {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to revoke invite');
+            throw new Error(error.detail || 'Не удалось отозвать пригласительный код');
         }
         
         adminNotify('Пригласительный код отозван', 'success');
@@ -7163,41 +7211,3 @@ document.addEventListener('click', (e) => {
         handleAdminTabOpen();
     }
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

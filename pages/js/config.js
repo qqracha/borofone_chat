@@ -35,6 +35,8 @@
     window.BOROFONE_CONFIG = Object.freeze({
         apiUrl,
         wsUrl,
+        appEnv: runtime.appEnv || 'development',
+        storageNamespace: runtime.storageNamespace || apiUrl || window.location.origin,
         routes: {
             main: routes.main || '/main.html',
             login: routes.login || '/login.html',

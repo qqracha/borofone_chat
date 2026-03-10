@@ -13,7 +13,19 @@
  */
 
 // ── Do Not Disturb (DND) Mode ─────────────────────────────────────────
-const DND_STORAGE_KEY = 'doNotDisturb';
+function getStorageNamespace() {
+    const rawNamespace = window.BOROFONE_CONFIG?.storageNamespace
+        || window.BOROFONE_CONFIG?.apiUrl
+        || window.API_URL
+        || window.location.origin;
+    return String(rawNamespace).replace(/[^a-zA-Z0-9_.-]+/g, '_');
+}
+
+const STORAGE_NAMESPACE = getStorageNamespace();
+const DND_STORAGE_KEY = `doNotDisturb:${STORAGE_NAMESPACE}`;
+const RECENT_MESSAGE_NOTIFICATION_TTL_MS = 15000;
+const recentMessageNotifications = window.__BOROFONE_RECENT_MESSAGE_NOTIFICATIONS__ || new Map();
+window.__BOROFONE_RECENT_MESSAGE_NOTIFICATIONS__ = recentMessageNotifications;
 
 /**
  * Получить состояние режима "Не беспокоить".
@@ -96,7 +108,33 @@ function playNotificationSound() {
  * }
  */
 
-const STORAGE_KEY = 'lastReadMessage';
+function claimMessageNotification(messageId, roomId) {
+    const normalizedMessageId = Number(messageId);
+    if (!Number.isFinite(normalizedMessageId)) {
+        return true;
+    }
+
+    const normalizedRoomId = Number(roomId);
+    const notificationKey = Number.isFinite(normalizedRoomId)
+        ? `${normalizedRoomId}:${normalizedMessageId}`
+        : `unknown:${normalizedMessageId}`;
+    const now = Date.now();
+
+    for (const [key, expiresAt] of recentMessageNotifications.entries()) {
+        if (expiresAt <= now) {
+            recentMessageNotifications.delete(key);
+        }
+    }
+
+    if (recentMessageNotifications.has(notificationKey)) {
+        return false;
+    }
+
+    recentMessageNotifications.set(notificationKey, now + RECENT_MESSAGE_NOTIFICATION_TTL_MS);
+    return true;
+}
+
+const STORAGE_KEY = `lastReadMessage:${STORAGE_NAMESPACE}`;
 
 /**
  * Получить ID последнего прочитанного сообщения в комнате.
@@ -186,4 +224,5 @@ window.notifications = {
     isDoNotDisturbEnabled,
     setDoNotDisturb,
     toggleDoNotDisturb,
+    claimMessageNotification,
 };
