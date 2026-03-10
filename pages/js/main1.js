@@ -6,7 +6,7 @@ function resolveApiBase() {
     const url = new URL(window.location.href);
 
     if (url.protocol === 'file:') {
-        return 'http://localhost:8000';
+        return window.getApiUrl ? window.getApiUrl() : 'http://localhost:8000';
     }
 
     if (url.port && url.port !== '8000') {
@@ -23,7 +23,7 @@ function resolveWsBase(apiBase) {
 }
 
 const API_URL = resolveApiBase();
-const WS_URL = resolveWsBase(API_URL);
+const WS_URL = window.getWsUrl ? window.getWsUrl() : resolveWsBase(API_URL);
 
 // ==========================================
 // STATE
@@ -58,7 +58,7 @@ const settingsBtn = document.getElementById('settingsBtn');
 // ==========================================
 
 function redirectToLogin() {
-    window.location.href = './login.html';
+    window.location.href = (window.getAppRoutes ? window.getAppRoutes().login : '/login.html');
 }
 
 async function fetchWithAuth(url, options = {}) {
@@ -458,3 +458,4 @@ async function init() {
 
 // Start app
 init();
+

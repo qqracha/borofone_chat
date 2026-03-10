@@ -1,26 +1,26 @@
 @echo off
 chcp 65001 >nul
+set "PUBLIC_HOST=%BOROFONE_PUBLIC_HOST%"
+if "%PUBLIC_HOST%"=="" set "PUBLIC_HOST=localhost"
+set "HTTPS_PORT=%BOROFONE_HTTPS_PORT%"
+if "%HTTPS_PORT%"=="" set "HTTPS_PORT=443"
+
 echo ================================================
 echo   Borofone Chat - HTTPS Server Launcher
 echo ================================================
 echo.
 
-REM Check if running as administrator
 net session >nul 2>&1
 if %errorLevel% neq 0 (
     echo [WARNING] Not running as Administrator!
-    echo Port 443 requires admin privileges.
-    echo.
-    echo Please run this script as Administrator.
+    echo Port %HTTPS_PORT% may require admin privileges.
     echo.
     pause
     exit /b 1
 )
 
-REM Check if SSL certificates exist (PFX or PEM)
 if exist "ssl\voice.pfx" (
     echo [OK] Found PFX certificate: ssl\voice.pfx
-    echo      Will auto-convert to PEM format...
     goto :start_server
 )
 
@@ -40,12 +40,12 @@ exit /b 1
 :start_server
 echo.
 echo Starting HTTPS server...
-echo Address: https://26.150.183.241/
+echo Address: https://%PUBLIC_HOST%:%HTTPS_PORT%/
 echo.
 echo Press Ctrl+C to stop
 echo ================================================
 echo.
 
-python run_https.py
+python run_https.py --host 0.0.0.0 --port %HTTPS_PORT%
 
 pause
