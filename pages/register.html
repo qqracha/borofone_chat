@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8" />
@@ -14,7 +14,6 @@
         <div class="gradient-orb orb-3"></div>
     </div>
 
-    <!-- Абстрактное лого -->
     <div class="logo-badge">
         <div class="logo-container">
             <div class="logo-shape"></div>
@@ -30,58 +29,27 @@
                 <form id="registerForm">
                     <div class="form-group">
                         <label for="email">Email</label>
-                        <input
-                            id="email"
-                            type="email"
-                            placeholder="your@email.com"
-                            required
-                            autocomplete="email"
-                        />
+                        <input id="email" type="email" placeholder="your@email.com" required autocomplete="email" />
                     </div>
 
                     <div class="form-group">
                         <label for="username">Username</label>
-                        <input
-                            id="username"
-                            type="text"
-                            placeholder="username"
-                            required
-                            maxlength="32"
-                            autocomplete="username"
-                        />
+                        <input id="username" type="text" placeholder="username" required maxlength="32" autocomplete="username" />
                     </div>
 
                     <div class="form-group">
                         <label for="displayName">Отображаемое имя</label>
-                        <input
-                            id="displayName"
-                            type="text"
-                            placeholder="Ваше имя"
-                            required
-                            maxlength="50"
-                        />
+                        <input id="displayName" type="text" placeholder="Ваше имя" required maxlength="50" />
                     </div>
 
                     <div class="form-group">
                         <label for="password">Пароль</label>
-                        <input
-                            id="password"
-                            type="password"
-                            placeholder="Минимум 8 символов"
-                            required
-                            minlength="8"
-                            autocomplete="new-password"
-                        />
+                        <input id="password" type="password" placeholder="Минимум 8 символов" required minlength="8" autocomplete="new-password" />
                     </div>
 
                     <div class="form-group">
                         <label for="inviteCode">Инвайт-код</label>
-                        <input
-                            id="inviteCode"
-                            type="text"
-                            placeholder="Введите код приглашения"
-                            required
-                        />
+                        <input id="inviteCode" type="text" placeholder="Введите код приглашения" required />
                     </div>
 
                     <button type="submit">Зарегистрироваться</button>
@@ -95,33 +63,11 @@
         </div>
     </div>
 
+    <script src="/app-config.js"></script>
+    <script src="js/config.js"></script>
     <script>
-        // ==========================================
-        // API КОНФИГУРАЦИЯ
-        // ==========================================
-
-        function resolveApiBase() {
-            const stored = localStorage.getItem('api_base');
-            if (stored) return stored.replace(/\/$/, '');
-
-            const url = new URL(window.location.href);
-
-            if (url.protocol === 'file:') {
-                return 'http://localhost:8000';
-            }
-
-            if (url.port && url.port !== '8000' && url.port !== '9443') {
-                return `${url.protocol}//${url.hostname}:${url.port}`;
-            }
-
-            return url.origin;
-        }
-
-        const API_URL = resolveApiBase();
-
-        // ==========================================
-        // ОБРАБОТКА ФОРМЫ РЕГИСТРАЦИИ (с cookies)
-        // ==========================================
+        const API_URL = window.getApiUrl ? window.getApiUrl() : window.location.origin;
+        const APP_ROUTES = window.getAppRoutes ? window.getAppRoutes() : { main: '/main.html' };
 
         const registerForm = document.getElementById('registerForm');
         const errorText = document.getElementById('errorText');
@@ -135,27 +81,24 @@
                 username: document.getElementById('username').value.trim(),
                 display_name: document.getElementById('displayName').value.trim(),
                 password: document.getElementById('password').value.trim(),
-                invite_code: document.getElementById('inviteCode').value.trim()
+                invite_code: document.getElementById('inviteCode').value.trim(),
             };
 
             try {
                 const response = await fetch(`${API_URL}/auth/register`, {
                     method: 'POST',
-                    credentials: 'include',  // ← ВАЖНО! Сохраняет cookies
+                    credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(payload),
                 });
 
                 const data = await response.json();
-
                 if (!response.ok) {
                     errorText.textContent = data.detail || 'Ошибка регистрации';
                     return;
                 }
 
-                // Токены установлены в httpOnly cookies автоматически
-                // Перенаправляем на главную страницу
-                window.location.href = './main.html';
+                window.location.href = APP_ROUTES.main;
             } catch (err) {
                 errorText.textContent = 'Ошибка сети. Попробуйте позже.';
             }

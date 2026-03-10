@@ -1369,7 +1369,7 @@ document.body.appendChild(participantVolumeMenu);
 // ==========================================
 
 function redirectToLogin() {
-    window.location.href = './login.html';
+    window.location.href = getAppRoutes().login;
 }
 
 async function fetchWithAuth(url, options = {}) {
@@ -3291,7 +3291,7 @@ async function logout() {
         });
 
         if (response.ok) {
-            window.location.href = './login.html';
+            window.location.href = getAppRoutes().login;
         } else {
             alert('Не удалось выйти из аккаунта');
         }
@@ -6896,6 +6896,7 @@ document.addEventListener('click', (e) => {
         handleAdminTabOpen();
     }
 });
+
 
 
 

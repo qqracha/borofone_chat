@@ -1,13 +1,7 @@
-// ==========================================
-// API КОНФИГУРАЦИЯ
-// ==========================================
-
-// API URL - всегда используем текущий origin чтобы cookies работали
-const API_URL = window.location.origin;
-
-// ==========================================
-// ОБРАБОТКА ФОРМЫ ВХОДА (с cookies)
-// ==========================================
+﻿const API_URL = window.getApiUrl ? window.getApiUrl() : window.location.origin;
+const APP_ROUTES = window.getAppRoutes
+    ? window.getAppRoutes()
+    : { main: '/main.html' };
 
 const loginForm = document.getElementById('loginForm');
 const errorText = document.getElementById('errorText');
@@ -22,7 +16,7 @@ loginForm.addEventListener('submit', async (event) => {
     try {
         const response = await fetch(`${API_URL}/auth/login`, {
             method: 'POST',
-            credentials: 'include',  // ← ВАЖНО! Сохраняет cookies
+            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password })
         });
@@ -34,9 +28,7 @@ loginForm.addEventListener('submit', async (event) => {
             return;
         }
 
-        // Токены установлены в httpOnly cookies автоматически
-        // Перенаправляем на главную страницу
-        window.location.href = './main.html';
+        window.location.href = APP_ROUTES.main;
     } catch (err) {
         errorText.textContent = 'Ошибка сети. Попробуйте позже.';
     }

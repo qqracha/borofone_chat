@@ -1,4 +1,4 @@
-services:
+﻿services:
   postgres:
     image: postgres:16
     environment:
@@ -11,6 +11,8 @@ services:
       timeout: 3s
       retries: 30
       start_period: 5s
+    ports:
+      - "127.0.0.1:5432:5432"
     networks:
       - borofone_network
 
@@ -21,6 +23,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    ports:
+      - "127.0.0.1:6379:6379"
     networks:
       - borofone_network
 
@@ -38,4 +42,3 @@ services:
 networks:
   borofone_network:
     driver: bridge
-

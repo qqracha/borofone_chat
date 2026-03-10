@@ -1,177 +1,157 @@
-import asyncio
-import os
+import json
 from contextlib import asynccontextmanager
 from typing import Callable
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse, FileResponse, HTMLResponse
 
-from app.infra.db import engine
-from app.infra.redis import get_redis_client
-from app.models import Base
+from app.api import attachments, rooms, voice_rooms, wordle
+from app.api.admin import router as admin_router
+from app.api.auth import router as auth_router
 from app.api.http import router as http_router
 from app.api.ws import router as ws_router
-from app.api.auth import router as auth_router
-from app.api.admin import router as admin_router
-from app.api import auth, http, ws, rooms, attachments, voice_rooms, wordle
+from app.infra.db import engine
+from app.settings import settings
 
-# Base allowed origins
-ALLOWED_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "https://borofone-chat.loca.lt",
-    # HTTPS local development
-    "https://localhost:443",
-    "https://localhost",
-    "https://127.0.0.1:443",
-    "https://127.0.0.1",
-]
 
-# Add Radmin VPN IP if configured
-RADMIN_IP = os.getenv("RADMIN_IP", "26.150.183.241")
-if RADMIN_IP:
-    ALLOWED_ORIGINS.extend([
-        f"https://{RADMIN_IP}",
-        f"https://{RADMIN_IP}:443",
-        f"http://{RADMIN_IP}:8000",  # Fallback for HTTP
-    ])
+def _list_media_files(directory, suffixes: tuple[str, ...], *, exclude_readme: bool = False) -> list[str]:
+    if not directory.is_dir():
+        return []
 
-# Add custom origins from environment variable
-CUSTOM_ORIGINS = os.getenv("ALLOWED_ORIGINS", "")
-if CUSTOM_ORIGINS:
-    ALLOWED_ORIGINS.extend([origin.strip() for origin in CUSTOM_ORIGINS.split(",") if origin.strip()])
+    items = []
+    for entry in directory.iterdir():
+        if not entry.is_file():
+            continue
+        if not entry.name.lower().endswith(suffixes):
+            continue
+        if exclude_readme and entry.name.lower().startswith('readme'):
+            continue
+        items.append(entry.name)
+    return items
 
-# Добавляем IP адрес VPS для HTTPS
-ALLOWED_ORIGINS.extend([
-    "https://91.132.161.44",
-    "https://91.132.161.44:9443",
-    "http://91.132.161.44",
-    "http://91.132.161.44:8000",
-])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Migrations are applied manually via alembic upgrade
     yield
 
-    # Shutdown
     from app.infra.redis import close_redis
+
     await close_redis()
-    await engine.dispose() # Close connection pool with SQLAlchemy
+    await engine.dispose()
+
 
 app = FastAPI(
-    title="Borofone Chat API",
-    version="1.0.0",
-    lifespan=lifespan
+    title='Borofone Chat API',
+    version='1.0.0',
+    lifespan=lifespan,
 )
 
-# CORS for browser-based login/register pages (incl. preflight OPTIONS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins = ALLOWED_ORIGINS,
-    allow_credentials = True,
-    allow_methods = ["*"],
-    allow_headers = ["*"],
-    expose_headers = ["Set-Cookie"],
+    allow_origins=settings.allowed_origins_list,
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+    expose_headers=['Set-Cookie'],
 )
 
-# Middleware to add Cross-Origin headers for Godot game (COOP/COEP)
-@app.middleware("http")
+
+@app.middleware('http')
 async def add_cross_origin_headers(request: Request, call_next: Callable):
     response: Response = await call_next(request)
-    
-    # Add COOP and COEP headers for game files
-    if request.url.path.startswith("/games/"):
-        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
-    
+    if request.url.path.startswith('/games/'):
+        response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
+        response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
     return response
 
-@app.get("/")
+
+@app.get('/app-config.js', include_in_schema=False)
+async def app_config_js() -> Response:
+    payload = {
+        'apiUrl': settings.resolved_public_api_base_url,
+        'wsUrl': settings.resolved_public_ws_base_url,
+        'routes': {
+            'main': settings.main_page_route,
+            'login': settings.login_page_route,
+            'register': settings.register_page_route,
+        },
+        'uploads': {
+            'avatarsBasePath': settings.avatar_public_path,
+            'attachmentsBasePath': settings.attachments_public_path,
+        },
+    }
+    return Response(
+        content=f'window.__BOROFONE_RUNTIME_CONFIG__ = {json.dumps(payload, ensure_ascii=False)};\n',
+        media_type='application/javascript',
+    )
+
+
+@app.get('/')
 async def root():
-    return RedirectResponse(url="main.html")
+    return RedirectResponse(url=settings.main_page_path.lstrip('/'))
 
-@app.get("/favicon.ico")
+
+@app.get('/favicon.ico')
 async def favicon():
-    return FileResponse("favicon.ico")
+    return FileResponse(settings.favicon_file)
 
-# Endpoint to list custom emojis
-@app.get("/api/emoji")
+
+@app.get('/api/emoji')
 async def list_custom_emojis():
-    """List all custom emoji files in the pages/emoji folder"""
-    import os
-    emoji_dir = "pages/emoji"
-    if os.path.isdir(emoji_dir):
-        emojis = [f for f in os.listdir(emoji_dir) if f.lower().endswith(('.gif', '.png', '.jpg', '.jpeg', '.webp'))]
-        return {"emojis": emojis}
-    return {"emojis": []}
+    return {'emojis': _list_media_files(settings.emoji_path, ('.gif', '.png', '.jpg', '.jpeg', '.webp'))}
 
-# Endpoint to list stickers
-@app.get("/api/stickers")
+
+@app.get('/api/stickers')
 async def list_stickers():
-    """List all stickers in the pages/stickers folder"""
-    import os
-    sticker_dir = "pages/stickers"
-    if os.path.isdir(sticker_dir):
-        # Support png, jpg, gif, webp, exclude README files
-        stickers = [f for f in os.listdir(sticker_dir) 
-                   if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')) 
-                   and not f.lower().startswith('readme')]
-        return {"stickers": stickers}
-    return {"stickers": []}
+    return {
+        'stickers': _list_media_files(
+            settings.stickers_path,
+            ('.png', '.jpg', '.jpeg', '.gif', '.webp'),
+            exclude_readme=True,
+        )
+    }
 
-# Endpoint to list GIFs
-@app.get("/api/gifs")
+
+@app.get('/api/gifs')
 async def list_gifs():
-    """List all GIFs in the pages/gifs folder"""
-    import os
-    gifs_dir = "pages/gifs"
-    if os.path.isdir(gifs_dir):
-        # Exclude README files
-        gifs = [f for f in os.listdir(gifs_dir) 
-               if f.lower().endswith(('.gif', '.webp')) and not f.lower().startswith('readme')]
-        return {"gifs": gifs}
-    return {"gifs": []}
+    return {
+        'gifs': _list_media_files(
+            settings.gifs_path,
+            ('.gif', '.webp'),
+            exclude_readme=True,
+        )
+    }
 
-# Endpoint to get all media (emoji, stickers, gifs) at once
-@app.get("/api/media")
+
+@app.get('/api/media')
 async def list_all_media():
-    """List all custom emoji, stickers, and GIFs in one call"""
-    import os
-    
-    result = {"emojis": [], "stickers": [], "gifs": []}
-    
-    # Emoji folder
-    emoji_dir = "pages/emoji"
-    if os.path.isdir(emoji_dir):
-        result["emojis"] = [f for f in os.listdir(emoji_dir) if f.lower().endswith(('.gif', '.png', '.jpg', '.jpeg', '.webp'))]
-    
-    # Stickers folder
-    sticker_dir = "pages/stickers"
-    if os.path.isdir(sticker_dir):
-        result["stickers"] = [f for f in os.listdir(sticker_dir) 
-                             if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp'))
-                             and not f.lower().startswith('readme')]
-    
-    # GIFs folder
-    gifs_dir = "pages/gifs"
-    if os.path.isdir(gifs_dir):
-        result["gifs"] = [f for f in os.listdir(gifs_dir) 
-                         if f.lower().endswith(('.gif', '.webp')) and not f.lower().startswith('readme')]
-    
-    return result
+    return {
+        'emojis': _list_media_files(settings.emoji_path, ('.gif', '.png', '.jpg', '.jpeg', '.webp')),
+        'stickers': _list_media_files(
+            settings.stickers_path,
+            ('.png', '.jpg', '.jpeg', '.gif', '.webp'),
+            exclude_readme=True,
+        ),
+        'gifs': _list_media_files(
+            settings.gifs_path,
+            ('.gif', '.webp'),
+            exclude_readme=True,
+        ),
+    }
 
-app.include_router(http_router, tags=["HTTP"]) # Add a router with HTTP endpoints
-app.include_router(ws_router, tags=["Websocket"]) # Add a router with WebSockets endpoints
-app.include_router(auth_router)  # /auth/*
-app.include_router(admin_router)  # /admin/invites/*
 
+app.include_router(http_router, tags=['HTTP'])
+app.include_router(ws_router, tags=['Websocket'])
+app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(rooms.router)
 app.include_router(attachments.router)
 app.include_router(voice_rooms.router)
 app.include_router(wordle.router)
 
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-app.mount("/", StaticFiles(directory="pages", html=True), name="pages")
+settings.uploads_path.mkdir(parents=True, exist_ok=True)
+
+app.mount('/uploads', StaticFiles(directory=settings.uploads_path), name='uploads')
+app.mount('/', StaticFiles(directory=settings.pages_path, html=True), name='pages')

@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-staging:
+    name: Deploy Staging
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -euxo pipefail
+            cd /opt/borofone-chat-staging
+            echo "[deploy] $(date -Is) start staging commit=${{ github.sha }}"
+            git fetch --prune origin
+            git checkout dev
+            git reset --hard origin/dev
+            python3 -m venv .venv || true
+            . .venv/bin/activate
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            alembic upgrade head
+            mkdir -p uploads uploads/avatars uploads/attachments logs
+            systemctl restart borofone-staging
+            systemctl status borofone-staging --no-pager
+            echo "[deploy] $(date -Is) done staging commit=${{ github.sha }}"
+
+  deploy-production:
+    name: Deploy Production
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -euxo pipefail
+            cd /opt/borofone-chat-prod
+            echo "[deploy] $(date -Is) start production commit=${{ github.sha }}"
+            git fetch --prune origin
+            git checkout main
+            git reset --hard origin/main
+            python3 -m venv .venv || true
+            . .venv/bin/activate
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            alembic upgrade head
+            mkdir -p uploads uploads/avatars uploads/attachments logs
+            systemctl restart borofone-prod
+            systemctl status borofone-prod --no-pager
+            echo "[deploy] $(date -Is) done production commit=${{ github.sha }}"
+

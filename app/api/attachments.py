@@ -11,15 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_current_user
 from app.infra.db import get_db
 from app.models import User
+from app.settings import settings
 
 router = APIRouter(prefix="/attachments", tags=["Attachments"])
 
 # Директория для хранения файлов
-UPLOADS_DIR = Path("uploads/attachments")
+UPLOADS_DIR = settings.attachments_path
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Максимальный размер файла (10MB)
-MAX_FILE_SIZE = 10 * 1024 * 1024
+MAX_FILE_SIZE = settings.max_upload_file_size
 
 # Разрешённые MIME типы
 ALLOWED_MIME_TYPES = {
@@ -98,7 +99,7 @@ async def upload_attachments(
             f.write(content)
         
         # Формируем URL для доступа
-        public_url = f"/uploads/attachments/{unique_filename}"
+        public_url = f"{settings.attachments_public_path}/{unique_filename}"
         
         uploaded.append({
             "filename": file.filename,
@@ -135,3 +136,4 @@ async def delete_attachment(
     os.remove(file_path)
     
     return {"deleted": filename}
+

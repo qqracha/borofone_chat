@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.db import get_db
 from app.models import Invite, User
+from app.settings import settings
 from app.schemas.auth import (
     LoginRequest,
     RefreshRequest,
@@ -36,17 +37,17 @@ from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-AVATAR_UPLOAD_DIR = Path("uploads/avatars")
+AVATAR_UPLOAD_DIR = settings.avatars_path
 ALLOWED_AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-MAX_AVATAR_BYTES = 3 * 1024 * 1024
+MAX_AVATAR_BYTES = settings.max_avatar_bytes
 
 # Cookie settings
-ACCESS_TOKEN_EXPIRE_DAYS = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 30
+ACCESS_TOKEN_EXPIRE_DAYS = settings.access_token_expire_days
+REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
 
 # for prod & https Secure=True
-COOKIE_SECURE = False
-COOKIE_SAMESITE = "lax" # or "strict"
+COOKIE_SECURE = settings.cookie_secure
+COOKIE_SAMESITE = settings.cookie_samesite
 
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     # Access token
@@ -387,7 +388,7 @@ async def update_profile(
         filename = f"{current_user.id}_{secrets.token_hex(8)}{ext}"
         avatar_path = AVATAR_UPLOAD_DIR / filename
         avatar_path.write_bytes(data)
-        avatar_url = f"/uploads/avatars/{filename}"
+        avatar_url = f"{settings.avatar_public_path}/{filename}"
 
     current_user.display_name = normalized_display_name
     current_user.username = normalized_username

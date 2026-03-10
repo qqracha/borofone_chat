@@ -1,4 +1,4 @@
-# Borofone_chat | Here readme lol ( ͡° ͜ʖ ͡°)
+﻿# Borofone_chat | Here readme lol ( ͡° ͜ʖ ͡°)
 
 *A simple chat implemented within: FastApi, Redis, Postgres, Docker and SQLAlchemy.*
 
@@ -64,7 +64,8 @@ borofone_chat/
 │   ├── main.py                 # Entry Point: Initializing FastAPI and Routing
 │   ├── models.py               # SQLAlchemy models (database schema)
 │   ├── settings.py             # Managing settings via Pydantic Settings
-├── .env.example                
+├── .env.production.example     
+├── .env.staging.example        
 ├── docker-compose.yml          # Full environment (API + DB + Redis), not tested!
 ├── docker-compose.infra.yml    # Local infrastructure (DB + Redis)
 ├── requirements.txt            
@@ -263,7 +264,7 @@ python run_https.py --host 0.0.0.0 --port 443 --cert ssl/cert.pem --key ssl/key.
 
 Друзья заходят по адресу:
 ```
-https://26.150.183.241/
+https://<RADMIN_IP>/
 ```
 
 ⚠️ **Важно:** IP-адрес Radmin VPN может меняться. Обнови `.env`:
@@ -294,3 +295,37 @@ docker-compose -f docker-compose.prod.yml up -d
 ## Sources
 
 Gitbook: <https://qqracha.gitbook.io/qqracha-docs/vKWuRLooKQWdYTCfU3pv>
+
+## CI/CD
+
+Проект настроен под раздельные `staging` и `production` окружения:
+
+```text
+main -> production
+dev  -> staging
+```
+
+Основные артефакты:
+
+- `.github/workflows/deploy.yml` - автодеплой по `push` в `dev` и `main`
+- `.env.production.example` и `.env.staging.example` - шаблоны окружений
+- `deploy/systemd/` - systemd unit-файлы
+- `deploy/nginx/borofone.conf` - reverse proxy для production и staging
+- `scripts/setup_vps.sh` - первичная подготовка VPS
+- `docs/deployment/cicd.md` - пошаговые инструкции по setup и security
+
+Быстрый сценарий:
+
+```text
+push dev       -> GitHub Actions -> staging deploy
+merge dev main -> GitHub Actions -> production deploy
+```
+
+Перед включением схемы:
+
+1. Добавь GitHub Secrets для `PROD_*` и `STAGING_*`.
+2. Используй только `.env.production.example` и `.env.staging.example`, затем скопируй их в `/opt/borofone-chat-prod/.env` и `/opt/borofone-chat-staging/.env`.
+3. Установи `deploy/systemd/*.service` и `deploy/nginx/borofone.conf` на VPS.
+4. Включи branch protection для `main`, запрети прямой push и оставь deploy только через PR.
+
+Подробная инструкция: `docs/deployment/cicd.md`.
