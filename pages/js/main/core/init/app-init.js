@@ -34,9 +34,9 @@ async function init() {
     // Инициализируем Twemoji для Discord-подобных эмодзи
     if (typeof twemoji !== 'undefined') {
         twemoji.parse(document.body, {
-            base: 'https://twemoji.maxcdn.com/v/latest/',
-            ext: '.svg',
-            size: '36x36'
+            base: 'https://cdn.jsdelivr.net/npm/twemoji@14.0.2/assets/',
+            folder: 'svg',
+            ext: '.svg'
         });
     }
     

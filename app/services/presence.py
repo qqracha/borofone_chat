@@ -80,7 +80,7 @@ async def heartbeat_room(redis: Redis | None, room_id: int, user_id: int) -> Non
         is_member = await redis.sismember(room_presence_key(room_id), str(user_id))
         if is_member:
             # Продляем TTL
-            await redis.expire(f"room:{room_id}:online", 30)
+            await redis.expire(room_presence_key(room_id), 30)
     except Exception as e:
         print(f"[Presence] Error heartbeat: {e}")
 

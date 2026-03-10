@@ -1,7 +1,7 @@
 // Borofone Chat - Service Worker
-const CACHE_NAME = 'borofone-chat-v1';
-const STATIC_CACHE = 'borofone-static-v1';
-const DYNAMIC_CACHE = 'borofone-dynamic-v1';
+const CACHE_NAME = 'borofone-chat-v2';
+const STATIC_CACHE = 'borofone-static-v2';
+const DYNAMIC_CACHE = 'borofone-dynamic-v2';
 
 // Статические ресурсы для кэширования
 const STATIC_ASSETS = [
@@ -54,7 +54,7 @@ const STATIC_ASSETS = [
     '/login.html',
     '/register.html',
     'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
-    'https://twemoji.maxcdn.com/v/latest/twemoji.min.js'
+    'https://cdn.jsdelivr.net/npm/twemoji@14.0.2/dist/twemoji.min.js'
 ];
 
 // Установка Service Worker

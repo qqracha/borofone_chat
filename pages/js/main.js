@@ -3086,9 +3086,23 @@ function connectWebSocket() {
         const socket = new WebSocket(wsUrl);
         
         // Таймаут на подключение - 10 секунд
-        const connectionTimeout = setTimeout(() => {
-            console.warn('[WS] Connection timeout, proceeding anyway');
+        let wsResolved = false;
+        const resolveConnection = () => {
+            if (wsResolved) return;
+            wsResolved = true;
             resolve();
+        };
+
+        const connectionTimeout = setTimeout(() => {
+            console.warn('[WS] Connection timeout, closing socket and allowing reconnect');
+            updateConnectionStatus('disconnected');
+            wsConnecting = false;
+            try {
+                socket.close();
+            } catch (closeError) {
+                console.error('[WS] error while closing socket on timeout:', closeError);
+            }
+            resolveConnection();
         }, 10000);
 
         socket.onopen = () => {
@@ -3105,7 +3119,7 @@ function connectWebSocket() {
             
             ws = socket;
             wsConnecting = false;
-            resolve();
+            resolveConnection();
         };
 
         socket.onmessage = (event) => {
@@ -3254,14 +3268,18 @@ function connectWebSocket() {
         };
 
         socket.onclose = () => {
+            clearTimeout(connectionTimeout);
             console.log('[WS] disconnected');
             
             // Add log entry for disconnection
             addLogEntry('disconnect', 'Отключение от сервера');
             
             updateConnectionStatus('disconnected');
-            ws = null;
+            if (ws === socket) {
+                ws = null;
+            }
             wsConnecting = false;
+            resolveConnection();
 
             // Переподключаемся через 3 секунды
             setTimeout(() => connectWebSocket(), 3000);
@@ -3503,22 +3521,22 @@ async function saveSettings() {
     const usernameValue = settingsUsername.value.trim();
 
     if (!displayNameValue) {
-        alert('Nickname �� ����� ���� ������');
+        alert('Никнейм не может быть пустым');
         settingsDisplayName.focus();
         return;
     }
     if (displayNameValue.length > 50) {
-        alert('Nickname ������ ���� �� ������� 50 ��������');
+        alert('Никнейм не должен быть длиннее 50 символов');
         settingsDisplayName.focus();
         return;
     }
     if (usernameValue.length < 3) {
-        alert('Tag ������ ��������� ������� 3 �������');
+        alert('Тег должен содержать минимум 3 символа');
         settingsUsername.focus();
         return;
     }
     if (usernameValue.length > 32) {
-        alert('Tag ������ ���� �� ������� 32 ��������');
+        alert('Тег не должен быть длиннее 32 символов');
         settingsUsername.focus();
         return;
     }
@@ -3552,7 +3570,7 @@ async function saveSettings() {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || '�� ������� ��������� ���������');
+            throw new Error(error.detail || 'Не удалось сохранить настройки');
         }
 
         currentUser = await response.json();
@@ -3570,7 +3588,7 @@ async function saveSettings() {
         }
     } catch (err) {
         console.error('Failed to save settings:', err);
-        alert(err.message || '�� ������� ��������� ���������');
+        alert(err.message || 'Не удалось сохранить настройки');
     }
 }
 async function logout() {
@@ -6614,9 +6632,9 @@ async function init() {
     // Инициализируем Twemoji для Discord-подобных эмодзи
     if (typeof twemoji !== 'undefined') {
         twemoji.parse(document.body, {
-            base: 'https://twemoji.maxcdn.com/v/latest/',
-            ext: '.svg',
-            size: '36x36'
+            base: 'https://cdn.jsdelivr.net/npm/twemoji@14.0.2/assets/',
+            folder: 'svg',
+            ext: '.svg'
         });
     }
     
@@ -6929,7 +6947,7 @@ async function deleteRoom(roomId) {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to delete room');
+            throw new Error(error.detail || 'Не удалось удалить комнату');
         }
         
         adminNotify('Комната удалена', 'success');
@@ -6972,7 +6990,7 @@ async function adminCreateRoom() {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to create room');
+            throw new Error(error.detail || 'Не удалось создать комнату');
         }
         
         const room = await response.json();
@@ -7101,7 +7119,7 @@ async function createInvite() {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to create invite');
+            throw new Error(error.detail || 'Не удалось создать пригласительный код');
         }
         
         const invite = await response.json();
@@ -7133,7 +7151,7 @@ async function revokeInvite(inviteId) {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to revoke invite');
+            throw new Error(error.detail || 'Не удалось отозвать пригласительный код');
         }
         
         adminNotify('Пригласительный код отозван', 'success');

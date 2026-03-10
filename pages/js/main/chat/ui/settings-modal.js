@@ -116,22 +116,22 @@ async function saveSettings() {
     const usernameValue = settingsUsername.value.trim();
 
     if (!displayNameValue) {
-        alert('Nickname �� ����� ���� ������');
+        alert('Никнейм не может быть пустым');
         settingsDisplayName.focus();
         return;
     }
     if (displayNameValue.length > 50) {
-        alert('Nickname ������ ���� �� ������� 50 ��������');
+        alert('Никнейм не должен быть длиннее 50 символов');
         settingsDisplayName.focus();
         return;
     }
     if (usernameValue.length < 3) {
-        alert('Tag ������ ��������� ������� 3 �������');
+        alert('Тег должен содержать минимум 3 символа');
         settingsUsername.focus();
         return;
     }
     if (usernameValue.length > 32) {
-        alert('Tag ������ ���� �� ������� 32 ��������');
+        alert('Тег не должен быть длиннее 32 символов');
         settingsUsername.focus();
         return;
     }
@@ -165,7 +165,7 @@ async function saveSettings() {
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || '�� ������� ��������� ���������');
+            throw new Error(error.detail || 'Не удалось сохранить настройки');
         }
 
         currentUser = await response.json();
@@ -183,7 +183,7 @@ async function saveSettings() {
         }
     } catch (err) {
         console.error('Failed to save settings:', err);
-        alert(err.message || '�� ������� ��������� ���������');
+        alert(err.message || 'Не удалось сохранить настройки');
     }
 }
 async function logout() {

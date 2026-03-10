@@ -108,6 +108,32 @@ function playNotificationSound() {
  * }
  */
 
+function claimMessageNotification(messageId, roomId) {
+    const normalizedMessageId = Number(messageId);
+    if (!Number.isFinite(normalizedMessageId)) {
+        return true;
+    }
+
+    const normalizedRoomId = Number(roomId);
+    const notificationKey = Number.isFinite(normalizedRoomId)
+        ? `${normalizedRoomId}:${normalizedMessageId}`
+        : `unknown:${normalizedMessageId}`;
+    const now = Date.now();
+
+    for (const [key, expiresAt] of recentMessageNotifications.entries()) {
+        if (expiresAt <= now) {
+            recentMessageNotifications.delete(key);
+        }
+    }
+
+    if (recentMessageNotifications.has(notificationKey)) {
+        return false;
+    }
+
+    recentMessageNotifications.set(notificationKey, now + RECENT_MESSAGE_NOTIFICATION_TTL_MS);
+    return true;
+}
+
 const STORAGE_KEY = `lastReadMessage:${STORAGE_NAMESPACE}`;
 
 /**

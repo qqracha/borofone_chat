@@ -19,9 +19,23 @@ function connectWebSocket() {
         const socket = new WebSocket(wsUrl);
         
         // Таймаут на подключение - 10 секунд
-        const connectionTimeout = setTimeout(() => {
-            console.warn('[WS] Connection timeout, proceeding anyway');
+        let wsResolved = false;
+        const resolveConnection = () => {
+            if (wsResolved) return;
+            wsResolved = true;
             resolve();
+        };
+
+        const connectionTimeout = setTimeout(() => {
+            console.warn('[WS] Connection timeout, closing socket and allowing reconnect');
+            updateConnectionStatus('disconnected');
+            wsConnecting = false;
+            try {
+                socket.close();
+            } catch (closeError) {
+                console.error('[WS] error while closing socket on timeout:', closeError);
+            }
+            resolveConnection();
         }, 10000);
 
         socket.onopen = () => {
@@ -38,7 +52,7 @@ function connectWebSocket() {
             
             ws = socket;
             wsConnecting = false;
-            resolve();
+            resolveConnection();
         };
 
         socket.onmessage = (event) => {
@@ -187,14 +201,18 @@ function connectWebSocket() {
         };
 
         socket.onclose = () => {
+            clearTimeout(connectionTimeout);
             console.log('[WS] disconnected');
             
             // Add log entry for disconnection
             addLogEntry('disconnect', 'Отключение от сервера');
             
             updateConnectionStatus('disconnected');
-            ws = null;
+            if (ws === socket) {
+                ws = null;
+            }
             wsConnecting = false;
+            resolveConnection();
 
             // Переподключаемся через 3 секунды
             setTimeout(() => connectWebSocket(), 3000);
