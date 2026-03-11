@@ -220,6 +220,45 @@ async def delete_message(
     return event
 
 
+@router.delete("/rooms/{room_id}/messages/{message_id}/hard", status_code=status.HTTP_200_OK)
+async def hard_delete_message(
+    room_id: int,
+    message_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_admin),
+    redis: Redis = Depends(get_redis),
+):
+    """
+    Hard delete a message (permanent deletion).
+    
+    Only admins can perform hard delete on any message.
+    This completely removes the message from the database.
+    """
+    msg_stmt = select(Message).where(Message.id == message_id, Message.room_id == room_id)
+    msg = (await db.execute(msg_stmt)).scalar_one_or_none()
+    if not msg:
+        raise HTTPException(status_code=404, detail="message not found")
+
+    # Store event data before deletion
+    event = {
+        "type": "message_hard_deleted",
+        "room_id": room_id,
+        "message_id": message_id,
+    }
+
+    # Delete the message permanently
+    await db.delete(msg)
+    await db.commit()
+
+    if redis:
+        try:
+            await redis.publish(room_events_channel(room_id), json.dumps(event))
+        except Exception:
+            pass
+    
+    return event
+
+
 @router.post("/rooms/{room_id}/messages", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def post_message(
     room_id: int,

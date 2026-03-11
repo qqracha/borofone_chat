@@ -266,6 +266,42 @@ async def global_websocket_endpoint(
                         print(f"[WS] Delete error: {e}")
                     continue
 
+                if msg_type == "message_hard_delete":
+                    room_id = data.get("room_id")
+                    message_id = data.get("message_id")
+                    if not room_id or not message_id:
+                        continue
+
+                    # Only admins can hard delete
+                    if user.role != "admin":
+                        continue
+
+                    try:
+                        async with SessionLocal() as db:
+                            msg_stmt = select(Message).where(Message.id == message_id, Message.room_id == room_id)
+                            msg = (await db.execute(msg_stmt)).scalar_one_or_none()
+                            if not msg:
+                                continue
+
+                            # Store data before deletion
+                            payload = {
+                                "type": "message_hard_deleted",
+                                "room_id": room_id,
+                                "message_id": message_id,
+                            }
+
+                            # Permanently delete the message
+                            await db.delete(msg)
+                            await db.commit()
+
+                        if redis:
+                            await redis.publish(f"room:{room_id}", json.dumps(payload))
+                        else:
+                            await websocket.send_json(payload)
+                    except Exception as e:
+                        print(f"[WS] Hard delete error: {e}")
+                    continue
+
                 if msg_type == "join_room":
                     room_id = data.get("room_id")
                     if not room_id:
