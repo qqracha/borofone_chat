@@ -68,6 +68,7 @@ def serialize_message(msg: Message, current_user: User) -> MessageResponse:
             username=msg.user.username if msg.user else "Unknown",
             display_name=msg.user.display_name if msg.user else "Unknown User",
             avatar_url=msg.user.avatar_url if msg.user else None,
+            role=msg.user.role if msg.user else "member",
         ),
         attachments=[
             AttachmentResponse(

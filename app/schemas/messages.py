@@ -9,6 +9,7 @@ class MessageUserResponse(BaseModel):
     username: str
     display_name: str
     avatar_url: str | None
+    role: str = "member"  # Add role field for admin crown display
 
     class Config:
         from_attributes = True

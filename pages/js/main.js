@@ -222,6 +222,33 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * Generate admin crown HTML for user avatars
+ * @param {string} role - User role ('admin', 'moderator', etc.)
+ * @returns {string} HTML string for crown or empty string
+ */
+function getAdminCrownHtml(role) {
+    if (role !== 'admin') return '';
+    
+    // Crown SVG with gold gradient
+    const crownSvg = `
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-label="Администратор" role="img">
+            <defs>
+                <linearGradient id="goldGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#FFD700"/>
+                    <stop offset="50%" style="stop-color:#FFC107"/>
+                    <stop offset="100%" style="stop-color:#B8860B"/>
+                </linearGradient>
+            </defs>
+            <path d="M2 19L4 7L7 10L12 4L17 10L20 7L22 19H2Z" fill="url(#goldGradient)" stroke="#B8860B" stroke-width="1.5" stroke-linejoin="round"/>
+            <circle cx="4" cy="7" r="1.5" fill="#FFD700" stroke="#B8860B" stroke-width="0.5"/>
+            <circle cx="12" cy="4" r="1.5" fill="#FFD700" stroke="#B8860B" stroke-width="0.5"/>
+            <circle cx="20" cy="7" r="1.5" fill="#FFD700" stroke="#B8860B" stroke-width="0.5"/>
+        </svg>`;
+    
+    return `<span class="admin-crown" aria-label="Администратор" role="img">${crownSvg}</span>`;
+}
+
 // ==========================================
 // DISCORD-LIKE TOOLTIPS
 // ==========================================
@@ -1109,7 +1136,7 @@ function showUserProfile(userId, clickEvent = null) {
         });
         userProfileMemberSince.textContent = formattedDate;
         
-        // Set avatar
+        // Set avatar (no crown in profile popup)
         if (user.avatar_url) {
             const avatarUrl = withAvatarCacheBuster(
         normalizeAvatarUrl(user.avatar_url),
@@ -1696,7 +1723,9 @@ function addMessage(msg, animate = false) {
     const avatarUrl = withAvatarCacheBuster(
         normalizeAvatarUrl(msg.user?.avatar_url),
         msg.user?.id
-    )
+    );
+    const userRole = msg.user?.role || null;
+    const adminCrownHtml = getAdminCrownHtml(userRole);
 
     const time = new Date(msg.created_at).toLocaleTimeString('ru-RU', {
         hour: '2-digit',
@@ -1718,10 +1747,13 @@ function addMessage(msg, animate = false) {
 
 
     messageEl.innerHTML = `
-        <div class="message-avatar">
-            ${avatarUrl
-                ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(author)}" class="avatar-media avatar-media--message">`
-                : `<span>${authorInitial}</span>`}
+        <div class="message-avatar-wrapper">
+            ${adminCrownHtml}
+            <div class="message-avatar">
+                ${avatarUrl
+                    ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(author)}" class="avatar-media avatar-media--message">`
+                    : `<span>${authorInitial}</span>`}
+            </div>
         </div>
         <div class="message-content">
             <div class="message-header">
@@ -1745,9 +1777,9 @@ function addMessage(msg, animate = false) {
     const avatarImage = messageEl.querySelector('.avatar-media');
     if (avatarImage) {
         avatarImage.addEventListener('error', () => {
-            const avatar = messageEl.querySelector('.message-avatar');
-            if (avatar) {
-                avatar.innerHTML = `<span>${escapeHtml(authorInitial)}</span>`;
+            const avatarWrapper = messageEl.querySelector('.message-avatar-wrapper');
+            if (avatarWrapper) {
+                avatarWrapper.innerHTML = `${adminCrownHtml}<div class="message-avatar"><span>${escapeHtml(authorInitial)}</span></div>`;
             }
         }, { once: true });
     }

@@ -91,6 +91,7 @@ async def get_online_users_in_room(
             "username": user.username,
             "display_name": user.display_name,
             "avatar_url": user.avatar_url,
+            "role": user.role,
         }
         for user in users
     ]
