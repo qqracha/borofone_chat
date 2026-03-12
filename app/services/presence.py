@@ -199,6 +199,7 @@ async def get_all_users_with_status(
             "username": user.username,
             "display_name": user.display_name,
             "avatar_url": user.avatar_url,
+            "role": user.role,
             "is_online": user.is_online,
             "last_seen": user.last_seen.isoformat() if user.last_seen else None,
             "last_seen_formatted": format_last_seen(user.last_seen, now) if user.last_seen else "Никогда",

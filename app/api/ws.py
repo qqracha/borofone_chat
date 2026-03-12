@@ -481,6 +481,7 @@ async def global_websocket_endpoint(
                                     "username": msg.reply_to.user.username if msg.reply_to.user else "Unknown",
                                     "display_name": msg.reply_to.user.display_name if msg.reply_to.user else "Unknown User",
                                     "avatar_url": msg.reply_to.user.avatar_url if msg.reply_to.user else None,
+                                    "role": msg.reply_to.user.role if msg.reply_to.user else "member",
                                 },
                             }
 
@@ -497,6 +498,7 @@ async def global_websocket_endpoint(
                                 "username": username,
                                 "display_name": user.display_name,
                                 "avatar_url": user.avatar_url,
+                                "role": user.role,
                             },
                             "attachments": [
                                 {

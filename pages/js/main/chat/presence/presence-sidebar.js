@@ -2,6 +2,33 @@
 // PRESENCE (онлайн пользователи)
 // ==========================================
 
+/**
+ * Generate admin crown HTML for user avatars
+ * @param {string} role - User role ('admin', 'moderator', etc.)
+ * @returns {string} HTML string for crown or empty string
+ */
+function getAdminCrownHtml(role) {
+    if (role !== 'admin') return '';
+    
+    // Crown SVG with gold gradient
+    const crownSvg = `
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-label="Администратор" role="img">
+            <defs>
+                <linearGradient id="goldGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" style="stop-color:#FFD700"/>
+                    <stop offset="50%" style="stop-color:#FFC107"/>
+                    <stop offset="100%" style="stop-color:#B8860B"/>
+                </linearGradient>
+            </defs>
+            <path d="M2 19L4 7L7 10L12 4L17 10L20 7L22 19H2Z" fill="url(#goldGradient)" stroke="#B8860B" stroke-width="1.5" stroke-linejoin="round"/>
+            <circle cx="4" cy="7" r="1.5" fill="#FFD700" stroke="#B8860B" stroke-width="0.5"/>
+            <circle cx="12" cy="4" r="1.5" fill="#FFD700" stroke="#B8860B" stroke-width="0.5"/>
+            <circle cx="20" cy="7" r="1.5" fill="#FFD700" stroke="#B8860B" stroke-width="0.5"/>
+        </svg>`;
+    
+    return `<span class="admin-crown" aria-label="Администратор" role="img">${crownSvg}</span>`;
+}
+
 let presenceInterval = null;
 let currentSearch = '';
 let currentPage = 1;
@@ -105,6 +132,8 @@ function renderUserItem(user) {
         user.id
     );
     const initial = displayName[0]?.toUpperCase() || 'U';
+    const userRole = user.role || null;
+    const adminCrownHtml = getAdminCrownHtml(userRole);
 
     const avatarHtml = avatarUrl
         ? `<img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(displayName)}" class="avatar-media">`
@@ -116,7 +145,7 @@ function renderUserItem(user) {
 
     return `
         <div class="${itemClass}" data-user-id="${user.id}">
-            <div class="user-avatar">${avatarHtml}</div>
+            <div class="user-avatar-wrapper">${adminCrownHtml}<div class="user-avatar">${avatarHtml}</div></div>
             <div class="user-info">
                 <div class="user-display-name">${escapeHtml(displayName)}</div>
                 <div class="user-username">@${escapeHtml(user.username)}</div>

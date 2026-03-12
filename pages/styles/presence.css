@@ -73,6 +73,27 @@
     position: relative;
 }
 
+/* Admin Crown Styles for sidebar */
+.user-avatar-wrapper {
+    position: relative;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.user-avatar-wrapper .admin-crown {
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+}
+
+.user-avatar-wrapper .admin-crown svg {
+    width: 12px;
+    height: 12px;
+}
+
 .user-item:hover {
     background: rgba(255, 255, 255, 0.05);
 }

@@ -150,7 +150,7 @@ function showUserProfile(userId, clickEvent = null) {
         });
         userProfileMemberSince.textContent = formattedDate;
         
-        // Set avatar
+        // Set avatar (no crown in profile popup)
         if (user.avatar_url) {
             const avatarUrl = withAvatarCacheBuster(
         normalizeAvatarUrl(user.avatar_url),
