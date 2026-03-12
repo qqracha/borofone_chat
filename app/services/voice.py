@@ -27,27 +27,41 @@ class VoiceRuntime:
         self._user_room: dict[int, int] = {}
         self._lock = asyncio.Lock()
 
-    async def register_connection(self, user_id: int, websocket) -> None:
+    async def register_connection(self, user_id: int, websocket) -> bool:
         async with self._lock:
-            self._connections[user_id].add(websocket)
+            sockets = self._connections.get(user_id)
+            was_online = bool(sockets)
+            if sockets is None:
+                sockets = set()
+                self._connections[user_id] = sockets
+            sockets.add(websocket)
+            return not was_online
 
-    async def unregister_connection(self, user_id: int, websocket) -> tuple[int | None, VoiceParticipant | None]:
+    async def unregister_connection(self, user_id: int, websocket) -> tuple[int | None, VoiceParticipant | None, bool]:
         async with self._lock:
             sockets = self._connections.get(user_id)
             if sockets and websocket in sockets:
                 sockets.remove(websocket)
-                if not sockets:
-                    self._connections.pop(user_id, None)
-                    room_id = self._user_room.pop(user_id, None)
-                    if room_id is None:
-                        return None, None
-                    participant = self._rooms.get(room_id, {}).pop(user_id, None)
-                    if self._rooms.get(room_id) == {}:
-                        self._rooms.pop(room_id, None)
-                    return room_id, participant
-        return None, None
+                if sockets:
+                    return None, None, False
+                self._connections.pop(user_id, None)
+                room_id = self._user_room.pop(user_id, None)
+                if room_id is None:
+                    return None, None, True
+                participant = self._rooms.get(room_id, {}).pop(user_id, None)
+                if self._rooms.get(room_id) == {}:
+                    self._rooms.pop(room_id, None)
+                return room_id, participant, True
+        return None, None, False
 
-    async def join_room(self, room_id: int, user_id: int, username: str, display_name: str, avatar_url: str | None = None) -> tuple[list[dict], VoiceParticipant, int | None, VoiceParticipant | None]:
+    async def join_room(
+        self,
+        room_id: int,
+        user_id: int,
+        username: str,
+        display_name: str,
+        avatar_url: str | None = None,
+    ) -> tuple[list[dict], VoiceParticipant, int | None, VoiceParticipant | None]:
         async with self._lock:
             prev_room_id = self._user_room.get(user_id)
             prev_participant = None
@@ -80,7 +94,16 @@ class VoiceRuntime:
                 self._rooms.pop(room_id, None)
             return participant
 
-    async def update_state(self, room_id: int, user_id: int, *, muted: bool | None = None, deafened: bool | None = None, speaking: bool | None = None, screen_sharing: bool | None = None) -> VoiceParticipant | None:
+    async def update_state(
+        self,
+        room_id: int,
+        user_id: int,
+        *,
+        muted: bool | None = None,
+        deafened: bool | None = None,
+        speaking: bool | None = None,
+        screen_sharing: bool | None = None,
+    ) -> VoiceParticipant | None:
         async with self._lock:
             participant = self._rooms.get(room_id, {}).get(user_id)
             if not participant:
@@ -117,6 +140,10 @@ class VoiceRuntime:
             for conns in self._connections.values():
                 sockets.extend(conns)
             return sockets
+
+    async def online_users_count(self) -> int:
+        async with self._lock:
+            return len(self._connections)
 
     @staticmethod
     def _as_dict(participant: VoiceParticipant) -> dict:

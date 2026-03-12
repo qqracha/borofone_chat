@@ -7,13 +7,31 @@ let currentSearch = '';
 let currentPage = 1;
 const usersPerPage = 30;
 let totalUsers = 0;
+let globalOnlineCount = 0;
+
+function setGlobalOnlineCount(count) {
+    const safeCount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+    globalOnlineCount = safeCount;
+
+    const usersCountEl = document.getElementById('usersCount');
+    if (usersCountEl) {
+        usersCountEl.textContent = String(globalOnlineCount);
+    }
+
+    const mobileCountEl = document.getElementById('mobileUsersCount');
+    if (mobileCountEl) {
+        mobileCountEl.textContent = String(globalOnlineCount);
+        mobileCountEl.style.display = globalOnlineCount > 0 ? 'inline-flex' : 'none';
+    }
+}
+
+window.setGlobalOnlineCount = setGlobalOnlineCount;
 
 /**
  * Загрузить список всех пользователей с разделением на онлайн/оффлайн.
  */
 async function loadAllUsers() {
     if (!currentRoom) {
-        document.getElementById('usersCount').textContent = '0';
         document.getElementById('usersList').innerHTML = `
             <div class="placeholder-message">
                 <span class="placeholder-icon">👥</span>
@@ -43,7 +61,6 @@ async function loadAllUsers() {
         totalUsers = data.total || 0;
 
         // Обновляем счётчик
-        document.getElementById('usersCount').textContent = totalUsers;
 
         // Обновляем пагинацию
         updatePagination();
@@ -129,7 +146,6 @@ function updatePagination() {
  */
 async function loadOnlineUsers() {
     if (!currentRoom) {
-        document.getElementById('usersCount').textContent = '0';
         document.getElementById('usersList').innerHTML = `
             <div class="placeholder-message">
                 <span class="placeholder-icon">👥</span>
@@ -149,7 +165,6 @@ async function loadOnlineUsers() {
         const users = await response.json();
 
         // Обновляем счётчик
-        document.getElementById('usersCount').textContent = users.length;
 
         // Отображаем список
         const usersList = document.getElementById('usersList');

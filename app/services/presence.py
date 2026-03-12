@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from redis.asyncio import Redis
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infra.redis import room_presence_key
@@ -132,7 +132,7 @@ async def get_all_users_with_status(
     
     Args:
         db: Сессия БД
-        room_id: Опционально фильтр по комнате (для получения онлайн в конкретной комнате)
+        room_id: Опциональный параметр (онлайн определяется глобально для пользователя)
         status_filter: Фильтр по статусу ("online", "offline", или None)
         search_query: Поиск по username или display_name
         sort_by: Поле для сортировки
@@ -143,17 +143,6 @@ async def get_all_users_with_status(
     Returns:
         Кортеж (список пользователей, общее количество)
     """
-    from app.infra.redis import get_redis_client
-    
-    # Получаем ID онлайн пользователей в комнате
-    online_ids = set()
-    if room_id:
-        redis = get_redis_client()
-        if redis:
-            try:
-                online_ids = set(await get_online_users(redis, room_id))
-            except Exception as e:
-                print(f"[Presence] Error getting online IDs: {e}")
     
     # Базовый запрос - все активные пользователи
     stmt = select(User).where(User.is_active == True)
@@ -204,14 +193,13 @@ async def get_all_users_with_status(
     now = datetime.now(timezone.utc)
     user_list = []
     for user in users:
-        is_online_in_room = user.id in online_ids if room_id else user.is_online
         
         user_list.append({
             "id": user.id,
             "username": user.username,
             "display_name": user.display_name,
             "avatar_url": user.avatar_url,
-            "is_online": is_online_in_room,
+            "is_online": user.is_online,
             "last_seen": user.last_seen.isoformat() if user.last_seen else None,
             "last_seen_formatted": format_last_seen(user.last_seen, now) if user.last_seen else "Никогда",
         })

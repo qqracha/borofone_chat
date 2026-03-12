@@ -75,24 +75,13 @@ async def get_online_users_in_room(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Получить список онлайн пользователей в комнате.
+    Получить список онлайн пользователей (глобально, не по комнатам).
     
     Returns:
         List[dict]: Список пользователей с полями id, username, display_name, avatar_url
     """
-    from app.infra.redis import get_redis_client
-    from app.services.presence import get_online_users
-    from sqlalchemy import select
-    
-    # Получаем ID онлайн пользователей из Redis
-    redis = get_redis_client()
-    online_ids = await get_online_users(redis, room_id)
-    
-    if not online_ids:
-        return []
-    
-    # Загружаем данные пользователей из БД
-    stmt = select(User).where(User.id.in_(online_ids))
+    # Загружаем данные пользователей из БД (глобальный онлайн)
+    stmt = select(User).where(User.is_online == True, User.is_active == True)
     result = await db.execute(stmt)
     users = result.scalars().all()
     
@@ -137,7 +126,7 @@ async def get_all_users(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Получить всех пользователей с разделением на онлайн/оффлайн.
+    Получить всех пользователей с разделением на онлайн/оффлайн (глобальный статус).
     
     Поддерживает:
     - Фильтрацию по статусу (online/offline)
@@ -147,7 +136,7 @@ async def get_all_users(
     """
     users, total = await get_all_users_with_status(
         db=db,
-        room_id=room_id,
+        room_id=None,
         status_filter=status,
         search_query=search,
         sort_by=sort_by,
