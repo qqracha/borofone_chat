@@ -177,11 +177,18 @@ function connectWebSocket() {
                         renderScreenShareGrid();
                     }
                     renderVoiceRooms();
+                } else if (data.type === 'online_count') {
+                    if (window.setGlobalOnlineCount) {
+                        window.setGlobalOnlineCount(data.total);
+                    }
                 } else if (data.type === 'error') {
                     console.error('[WS] error:', data.detail);
                     if (data.code === 'unauthorized') redirectToLogin();
                 } else if (data.type === 'connected') {
                     console.log('[WS] ready');
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'online_count_request' }));
+                    }
                     if (currentVoiceRoomId) {
                         joinVoiceRoom(currentVoiceRoomId);
                     }

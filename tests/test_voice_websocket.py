@@ -73,7 +73,14 @@ def test_voice_websocket_join_screen_share_and_leave(monkeypatch):
 
             websocket.send_json({"type": "join_room", "room_id": 77})
 
-            room_joined = websocket.receive_json()
+            # Consume any online_count messages that may arrive from connection
+            while True:
+                msg = websocket.receive_json()
+                if msg.get("type") == "room_joined":
+                    room_joined = msg
+                    break
+                # Ignore other message types (online_count, etc.)
+
             assert room_joined["type"] == "room_joined"
             assert room_joined["room_id"] == 77
             assert room_joined["participants"] == [

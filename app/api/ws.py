@@ -74,7 +74,7 @@ async def global_websocket_endpoint(
 
     username = user.username
     user_id = user.id
-    await voice_runtime.register_connection(user_id, websocket)
+    is_first_connection = await voice_runtime.register_connection(user_id, websocket)
 
     # ── Redis: подписываемся на ВСЕ комнаты ──────────────────────
     redis = None
@@ -112,13 +112,13 @@ async def global_websocket_endpoint(
     print(f"[WS] {username} connected globally")
 
     # Устанавливаем статус пользователя как онлайн
-    try:
-        async with SessionLocal() as db:
-            from app.services.presence import set_user_online
-            await set_user_online(db, user_id)
-    except Exception as e:
-        print(f"[WS] Error setting user online: {e}")
-
+    if is_first_connection:
+        try:
+            async with SessionLocal() as db:
+                from app.services.presence import set_user_online
+                await set_user_online(db, user_id)
+        except Exception as e:
+            print(f"[WS] Error setting user online: {e}")
     stop_event = asyncio.Event()
 
     await websocket.send_json({"type": "connected", "user": {"id": user_id}})
@@ -143,6 +143,23 @@ async def global_websocket_endpoint(
                 await sock.send_json(payload)
             except Exception:
                 pass
+
+    async def broadcast_online_count(exclude: WebSocket | None = None) -> None:
+        payload = {
+            "type": "online_count",
+            "total": await voice_runtime.online_users_count(),
+        }
+        sockets = await voice_runtime.sockets_all()
+        for sock in sockets:
+            if exclude and sock is exclude:
+                continue
+            try:
+                await sock.send_json(payload)
+            except Exception:
+                pass
+    await broadcast_online_count()
+    if is_first_connection:
+        await broadcast_online_count(exclude=websocket)
 
     # ── Task 1: receive from client ───────────────────────────────
     async def receive_messages() -> None:
@@ -512,13 +529,21 @@ async def global_websocket_endpoint(
         except WebSocketDisconnect:
             pass
         finally:
-            room_id, participant = await voice_runtime.unregister_connection(user_id, websocket)
+            room_id, participant, is_last_connection = await voice_runtime.unregister_connection_with_status(user_id, websocket)
             if room_id and participant:
                 await broadcast_voice(room_id, {
                     "type": "participant_left",
                     "room_id": room_id,
                     "participant": {"user_id": participant.user_id, "username": participant.username, "display_name": participant.display_name},
                 })
+            if is_last_connection:
+                try:
+                    async with SessionLocal() as db:
+                        from app.services.presence import set_user_offline
+                        await set_user_offline(db, user_id)
+                except Exception as e:
+                    print(f"[WS] Error setting user offline: {e}")
+                await broadcast_online_count()
             stop_event.set()
 
     # ── Task 2: send to client ────────────────────────────────────
@@ -557,13 +582,6 @@ async def global_websocket_endpoint(
         except Exception as e:
             print(f"[WS] Cleanup error: {e}")
 
-    # Устанавливаем статус пользователя как оффлайн
-    try:
-        async with SessionLocal() as db:
-            from app.services.presence import set_user_offline
-            await set_user_offline(db, user_id)
-    except Exception as e:
-        print(f"[WS] Error setting user offline: {e}")
 
     print(f"[WS] {username} disconnected")
 

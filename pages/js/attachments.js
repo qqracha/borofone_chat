@@ -1384,11 +1384,49 @@ function createAudioPlayerHTML(attachment) {
 function initAudioPlayer(card) {
     const fileUrl = card.dataset.fileUrl;
     const fileId = card.dataset.fileId;
+
+    if (!fileUrl || !fileUrl.trim()) {
+        card.classList.add('audio-player-unavailable');
+        const playBtn = card.querySelector('.audio-player-play-btn-large');
+        if (playBtn) {
+            playBtn.disabled = true;
+            playBtn.setAttribute('aria-disabled', 'true');
+        }
+        const downloadLink = card.querySelector('.audio-player-download');
+        if (downloadLink) {
+            downloadLink.removeAttribute('href');
+            downloadLink.setAttribute('aria-disabled', 'true');
+            downloadLink.addEventListener('click', (e) => e.preventDefault());
+        }
+        const durationTime = card.querySelector('.audio-player-time.duration');
+        if (durationTime) durationTime.textContent = '--:--';
+        return;
+    }
     
     // Create audio element
     const audio = new Audio();
     audio.preload = 'metadata';
-    audio.src = fileUrl;
+    
+    // Validate URL before setting src to prevent "Invalid URI" errors
+    try {
+        if (fileUrl && fileUrl.trim()) {
+            audio.src = fileUrl;
+        } else {
+            // Invalid URL - disable player and return
+            console.warn('[AudioPlayer] Invalid file URL, disabling player:', fileUrl);
+            card.classList.add('audio-player-unavailable');
+            const playBtn = card.querySelector('.audio-player-play-btn-large');
+            if (playBtn) {
+                playBtn.disabled = true;
+                playBtn.setAttribute('aria-disabled', 'true');
+            }
+            return;
+        }
+    } catch (e) {
+        console.warn('[AudioPlayer] Error setting audio src:', e);
+        card.classList.add('audio-player-unavailable');
+        return;
+    }
     
     // Get UI elements
     const playBtn = card.querySelector('.audio-player-play-btn-large');
@@ -1454,10 +1492,20 @@ function initAudioPlayer(card) {
     });
     
     audio.addEventListener('error', (e) => {
-        console.error('Audio playback error:', e);
+        const error = audio.error;
+        if (error) {
+            // Media error codes: 1=aborted, 2=network, 3=decode, 4=src_not_supported
+            if (error.code === 4 || !audio.currentSrc) {
+                console.warn('[AudioPlayer] Invalid or unsupported audio source:', audio.currentSrc || 'empty');
+            } else {
+                console.warn('[AudioPlayer] Audio error:', error.code, error.message);
+            }
+        }
         card.classList.remove('loading');
+        card.classList.add('audio-player-unavailable');
         playIconSvg.style.display = 'block';
         pauseIconSvg.style.display = 'none';
+        if (playBtn) playBtn.disabled = true;
     });
     
     // Play/Pause button click
@@ -1711,3 +1759,4 @@ window.attachments = {
     getFileTypeInfo,
     getFileTypeIcon
 };
+
