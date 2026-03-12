@@ -144,18 +144,22 @@ async def global_websocket_endpoint(
             except Exception:
                 pass
 
-    async def broadcast_online_count() -> None:
+    async def broadcast_online_count(exclude: WebSocket | None = None) -> None:
         payload = {
             "type": "online_count",
             "total": await voice_runtime.online_users_count(),
         }
         sockets = await voice_runtime.sockets_all()
         for sock in sockets:
+            if exclude and sock is exclude:
+                continue
             try:
                 await sock.send_json(payload)
             except Exception:
                 pass
     await broadcast_online_count()
+    if is_first_connection:
+        await broadcast_online_count(exclude=websocket)
 
     # ── Task 1: receive from client ───────────────────────────────
     async def receive_messages() -> None:
@@ -525,7 +529,7 @@ async def global_websocket_endpoint(
         except WebSocketDisconnect:
             pass
         finally:
-            room_id, participant, is_last_connection = await voice_runtime.unregister_connection(user_id, websocket)
+            room_id, participant, is_last_connection = await voice_runtime.unregister_connection_with_status(user_id, websocket)
             if room_id and participant:
                 await broadcast_voice(room_id, {
                     "type": "participant_left",

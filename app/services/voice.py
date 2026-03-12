@@ -37,7 +37,13 @@ class VoiceRuntime:
             sockets.add(websocket)
             return not was_online
 
-    async def unregister_connection(self, user_id: int, websocket) -> tuple[int | None, VoiceParticipant | None, bool]:
+    async def unregister_connection(self, user_id: int, websocket) -> tuple[int | None, VoiceParticipant | None]:
+        room_id, participant, _ = await self.unregister_connection_with_status(user_id, websocket)
+        return room_id, participant
+
+    async def unregister_connection_with_status(
+        self, user_id: int, websocket
+    ) -> tuple[int | None, VoiceParticipant | None, bool]:
         async with self._lock:
             sockets = self._connections.get(user_id)
             if sockets and websocket in sockets:

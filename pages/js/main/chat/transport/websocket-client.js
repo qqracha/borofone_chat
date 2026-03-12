@@ -186,6 +186,9 @@ function connectWebSocket() {
                     if (data.code === 'unauthorized') redirectToLogin();
                 } else if (data.type === 'connected') {
                     console.log('[WS] ready');
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'online_count_request' }));
+                    }
                     if (currentVoiceRoomId) {
                         joinVoiceRoom(currentVoiceRoomId);
                     }
