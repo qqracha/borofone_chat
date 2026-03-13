@@ -450,6 +450,26 @@ async def global_websocket_endpoint(
                 if not room_id:
                     continue
 
+                # Проверяем, содержит ли сообщение эмодзи 🖕🏻 и отправлен ли он админом
+                message_body = data.get("body", "")
+                if "🖕🏻" in message_body and user.role == "admin":
+                    # Отправляем событие воспроизведения звука всем пользователям
+                    poshelti_event = {
+                        "type": "poshelti_sound",
+                        "user_id": user_id,
+                        "username": username,
+                    }
+                    if redis:
+                        try:
+                            # Публикуем во все комнаты для охвата всех пользователей
+                            async with SessionLocal() as db_rooms:
+                                result = await db_rooms.execute(select(Room))
+                                all_rooms = result.scalars().all()
+                                for room in all_rooms:
+                                    await redis.publish(room_events_channel(room.id), json.dumps(poshelti_event))
+                        except Exception as e:
+                            print(f"[WS] Publish poshelti sound failed: {e}")
+
                 try:
                     # Создаём новую сессию для каждого сообщения
                     async with SessionLocal() as db:

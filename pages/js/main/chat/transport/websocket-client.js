@@ -134,6 +134,13 @@ function connectWebSocket() {
                     if (messageEl) {
                         messageEl.remove();
                     }
+                } else if (data.type === 'poshelti_sound') {
+                    // Воспроизводим звук poshelti.mp3 при получении события от админа
+                    console.log('[WS] Received poshelti_sound event from:', data.username);
+                    const posheltiAudio = new Audio('/sounds/poshelti.mp3');
+                    posheltiAudio.preload = 'auto';
+                    posheltiAudio.volume = 0.10; // 15% громкости
+                    posheltiAudio.play().catch(err => console.error('[WS] Error playing poshelti sound:', err));
                 } else if (data.type === 'typing') {
                     handleTypingEvent(data);
                 } else if (data.type === 'room_joined') {
