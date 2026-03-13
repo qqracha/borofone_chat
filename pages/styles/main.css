@@ -3072,6 +3072,32 @@ body {
     background: rgba(255, 255, 255, 0.25);
 }
 
+.version-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    margin-left: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent-color, #DB734F);
+    background: rgba(219, 115, 79, 0.15);
+    border-radius: 12px;
+    vertical-align: middle;
+}
+
+.logs-version {
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--text-secondary, #aaa);
+    background: var(--bg-secondary, #252525);
+    border-radius: 6px;
+    border-left: 3px solid var(--accent-color, #DB734F);
+}
+
+.logs-version strong {
+    color: var(--accent-color, #DB734F);
+}
+
 .logs-empty {
     padding: 30px;
     text-align: center;
