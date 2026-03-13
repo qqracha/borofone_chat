@@ -250,8 +250,6 @@ const ScrollManager = (function() {
             
             state.initialized = true;
         }
-
-        console.log('[ScrollManager] Initialized');
     }
 
     /**
@@ -259,7 +257,6 @@ const ScrollManager = (function() {
      * Всегда скроллит к низу, ожидая загрузки изображений
      */
     function scrollOnPageLoad() {
-        console.log('[ScrollManager] Page load scroll');
         state.isAtBottom = true;
         scrollWithImages(true);
     }
@@ -269,7 +266,6 @@ const ScrollManager = (function() {
      * Всегда скроллит к низу
      */
     function scrollOnRoomChange() {
-        console.log('[ScrollManager] Room change scroll');
         state.isAtBottom = true;
         state.unreadCount = 0;
         hideUnreadIndicator();
@@ -288,18 +284,15 @@ const ScrollManager = (function() {
     function scrollOnNewMessage(message, isOwnMessage = false) {
         // Если это своё сообщение - всегда скроллим к низу
         if (isOwnMessage) {
-            console.log('[ScrollManager] Own message scroll');
             scrollWithImages(true);
             return;
         }
 
         // Если пользователь у дна - скроллим к новому сообщению
         if (state.isAtBottom) {
-            console.log('[ScrollManager] New message scroll (at bottom)');
             scrollWithImages(true);
         } else {
             // Пользователь прокрутил вверх - показываем индикатор
-            console.log('[ScrollManager] New message (scrolled up)');
             state.unreadCount++;
             showUnreadIndicator();
         }
@@ -314,16 +307,13 @@ const ScrollManager = (function() {
         // Для вложений логика та же что и для обычных сообщений
         // Но с ожиданием загрузки изображений
         if (isOwnMessage) {
-            console.log('[ScrollManager] Own attachment scroll');
             scrollWithImages(true);
             return;
         }
 
         if (state.isAtBottom) {
-            console.log('[ScrollManager] New attachment scroll (at bottom)');
             scrollWithImages(true);
         } else {
-            console.log('[ScrollManager] New attachment (scrolled up)');
             state.unreadCount++;
             showUnreadIndicator();
         }
@@ -333,8 +323,6 @@ const ScrollManager = (function() {
      * Прокрутка к индикатору непрочитанных сообщений
      */
     function scrollToUnread() {
-        console.log('[ScrollManager] Scroll to unread');
-        
         // Находим разделитель непрочитанных сообщений
         const divider = elements.list?.querySelector('.unread-divider');
         if (divider) {
@@ -350,7 +338,6 @@ const ScrollManager = (function() {
      * Принудительный скролл к низу (например, при клике на индикатор)
      */
     function forceScrollToBottom() {
-        console.log('[ScrollManager] Force scroll to bottom');
         state.isAtBottom = true;
         doScrollToBottom();
     }

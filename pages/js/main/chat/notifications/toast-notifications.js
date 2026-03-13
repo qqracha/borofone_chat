@@ -61,8 +61,13 @@ function checkForMention(message, currentUser) {
 function formatPreviewText(body, maxLength = 80) {
     if (!body) return '';
     
-    // Strip HTML tags
-    const text = body.replace(/<[^>]*>/g, '');
+    // Strip HTML tags (loop until no tags remain to avoid incomplete multi-character sanitization issues)
+    let text = body;
+    let previous;
+    do {
+        previous = text;
+        text = text.replace(/<[^>]*>/g, '');
+    } while (text !== previous);
     
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength).trim() + '...';
