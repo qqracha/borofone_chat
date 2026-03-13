@@ -3072,6 +3072,30 @@ body {
     background: rgba(255, 255, 255, 0.25);
 }
 
+/* Settings version info */
+.settings-version-info {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 16px;
+    margin: 8px 0;
+    background: rgba(219, 115, 79, 0.1);
+    border: 1px solid rgba(219, 115, 79, 0.2);
+    border-radius: 8px;
+}
+
+.settings-version-label {
+    color: var(--text-secondary, #aaa);
+    font-size: 13px;
+}
+
+.settings-version-value {
+    color: var(--accent-color, #DB734F);
+    font-weight: 600;
+    font-size: 14px;
+}
+
 .version-badge {
     display: inline-block;
     padding: 2px 8px;

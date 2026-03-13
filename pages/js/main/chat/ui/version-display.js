@@ -9,6 +9,36 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * Get version info for display in settings
+ */
+function getVersionInfo() {
+    const runtimeConfig = window.__BOROFONE_RUNTIME_CONFIG__ || {};
+    return runtimeConfig.appVersion || 'unknown';
+}
+
+/**
+ * Create or update the version display in settings modal
+ */
+function updateVersionDisplayInSettings() {
+    const versionInfoEl = document.getElementById('settingsVersionInfo');
+    if (!versionInfoEl) return;
+
+    const runtimeConfig = window.__BOROFONE_RUNTIME_CONFIG__ || {};
+    const appVersion = runtimeConfig.appVersion || 'unknown';
+    versionInfoEl.textContent = `v${appVersion}`;
+}
+
+/**
+ * Update version indicator state (called by version-checker)
+ * Note: Indicator is now in settings, not header
+ */
+function updateVersionIndicatorState(isOutdated) {
+    // Version indicator is now in settings modal
+    // Update version info display in settings if needed
+    updateVersionDisplayInSettings();
+}
+
 function updateLogsDisplay() {
     const logsList = document.getElementById('logsList');
     const logsVersionEl = document.getElementById('logsVersion');
@@ -62,9 +92,17 @@ function updateLogsDisplay() {
     logsList.innerHTML = html;
 }
 
-// Initialize version display once when page loads
+// Initialize version display when page loads
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', updateLogsDisplay);
+    document.addEventListener('DOMContentLoaded', () => {
+        updateLogsDisplay();
+        updateVersionDisplayInSettings();
+    });
 } else {
     updateLogsDisplay();
+    updateVersionDisplayInSettings();
 }
+
+// Expose functions for version checker to call
+window.updateVersionIndicatorState = updateVersionIndicatorState;
+window.updateVersionDisplayInSettings = updateVersionDisplayInSettings;
