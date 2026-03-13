@@ -1463,7 +1463,12 @@ function updateCollapsedParticipants() {
             ? `<img src="${escapeHtml(avatarUrl)}" alt="${safeName}" class="voice-collapsed-avatar-img" data-avatar-fallback="${initial}">`
             : `<span>${initial}</span>`;
 
-        return `<div class="voice-collapsed-participant${participant.speaking ? ' speaking' : ''}"><span class="avatar" data-avatar-fallback-target="1">${avatarMarkup}</span><span class="name">${safeName}</span></div>`;
+        const collapsedClasses = [
+            'voice-collapsed-participant',
+            participant.speaking ? 'speaking' : '',
+            participant.muted ? 'muted' : ''
+        ].filter(Boolean).join(' ');
+        return `<div class="${collapsedClasses}"><span class="avatar" data-avatar-fallback-target="1">${avatarMarkup}</span><span class="name">${safeName}</span></div>`;
     }).join('');
 
     attachVoiceAvatarFallbacks(voiceCollapsedParticipants);

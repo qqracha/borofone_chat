@@ -5795,6 +5795,33 @@ body {
     border-color: #4ade80;
     box-shadow: 0 0 8px rgba(74, 222, 128, 0.2);
 }
+
+/* Muted effect for collapsed participants */
+.voice-collapsed-participant.muted {
+    opacity: 0.75;
+}
+
+.voice-collapsed-participant.muted .avatar {
+    position: relative;
+}
+
+.voice-collapsed-participant.muted .avatar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        135deg,
+        rgba(0, 0, 0, 0.4) 0%,
+        rgba(0, 0, 0, 0.2) 100%
+    );
+    border-radius: inherit;
+    z-index: 3;
+    pointer-events: none;
+}
+
+.voice-collapsed-participant.muted .avatar img {
+    filter: grayscale(30%) brightness(0.7);
+}
 .voice-collapsed-participants {
     display: none;
 }
@@ -6190,6 +6217,48 @@ body {
 
 .voice-participant-card.speaking .voice-participant-avatar {
     border-color: rgba(74, 222, 128, 0.85);
+}
+
+/* Muted avatar dimming effect - beautiful and authentic */
+.voice-participant-card.muted .voice-participant-avatar {
+    position: relative;
+}
+
+.voice-participant-card.muted .voice-participant-avatar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        135deg,
+        rgba(0, 0, 0, 0.45) 0%,
+        rgba(0, 0, 0, 0.25) 50%,
+        rgba(0, 0, 0, 0.45) 100%
+    );
+    border-radius: inherit;
+    z-index: 5;
+    pointer-events: none;
+    animation: mutedAvatarPulse 2.5s ease-in-out infinite;
+}
+
+.voice-participant-card.muted .voice-participant-avatar-media img.voice-participant-avatar-img,
+.voice-participant-card.muted .voice-participant-avatar-media span {
+    filter: grayscale(30%) brightness(0.75);
+    transition: filter 0.3s ease;
+}
+
+@keyframes mutedAvatarPulse {
+    0%, 100% {
+        opacity: 0.85;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* Enhanced mute icon visibility on dimmed avatar */
+.voice-participant-card.muted .mute-status-icon {
+    z-index: 15;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
 }
 .voice-participant-avatar-media {
     width: 100%;
