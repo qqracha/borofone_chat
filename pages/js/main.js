@@ -1926,10 +1926,11 @@ function renderReactions(reactions) {
 }
 
 function renderReactionPicker(messageId) {
+    const safeMessageId = escapeHtmlAttr(String(messageId));
     const popular = REACTION_EMOJIS.map((emoji) => `
-        <button class="reaction-add-btn" data-add-reaction="${escapeHtml(emoji)}" data-message-id="${messageId}" type="button">${escapeHtml(emoji)}</button>
+        <button class="reaction-add-btn" data-add-reaction="${escapeHtml(emoji)}" data-message-id="${safeMessageId}" type="button">${escapeHtml(emoji)}</button>
     `).join('');
-    return `${popular}<button class="reaction-add-btn reaction-add-btn--all" data-open-all-emoji="${messageId}" type="button">＋</button>`;
+    return `${popular}<button class="reaction-add-btn reaction-add-btn--all" data-open-all-emoji="${safeMessageId}" type="button">＋</button>`;
 }
 
 function renderReplyPreview(replyTo) {
