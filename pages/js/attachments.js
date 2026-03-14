@@ -193,7 +193,8 @@ function validateFile(file) {
     // Check against allowed types
     const isAllowed = ALLOWED_TYPES.some(type => {
         if (type.endsWith('*')) {
-            return fileType.startsWith(type.replace('*', ''));
+            // Treat patterns like "image/*" as prefixes by removing the trailing "*"
+            return fileType.startsWith(type.slice(0, -1));
         }
         return fileType === type;
     });
