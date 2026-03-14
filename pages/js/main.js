@@ -1831,6 +1831,8 @@ function addMessage(msg, animate = false) {
 
     const reactionsHtml = renderReactions(msg.reactions || []);
 
+    // Безопасный идентификатор сообщения для использования в HTML-атрибутах
+    const safeMessageId = escapeHtmlAttr(String(msg.id));
 
     messageEl.innerHTML = `
         <div class="message-avatar-wrapper">
@@ -1850,12 +1852,12 @@ function addMessage(msg, animate = false) {
             ${renderReplyPreview(msg.reply_to)}
             ${bodyHtml}
             ${attachmentsHtml}
-            <div class="message-reactions" data-reactions-for="${msg.id}">${reactionsHtml}</div>
+            <div class="message-reactions" data-reactions-for="${safeMessageId}">${reactionsHtml}</div>
             <div class="message-hover-actions">
-                <button class="message-plus-btn" data-open-reaction-picker="${msg.id}" type="button">${getRandomReactionTriggerEmoji()}</button>
-                <button class="message-all-emoji-btn" data-open-all-emoji="${msg.id}" type="button">＋</button>
-                <button class="message-reply-btn" data-hover-reply="${msg.id}" type="button"${isDeleted ? ' disabled' : ''}>↩</button>
-                <div class="message-reaction-picker hidden" data-reaction-picker-for="${msg.id}">${renderReactionPicker(msg.id)}</div>
+                <button class="message-plus-btn" data-open-reaction-picker="${safeMessageId}" type="button">${getRandomReactionTriggerEmoji()}</button>
+                <button class="message-all-emoji-btn" data-open-all-emoji="${safeMessageId}" type="button">＋</button>
+                <button class="message-reply-btn" data-hover-reply="${safeMessageId}" type="button"${isDeleted ? ' disabled' : ''}>↩</button>
+                <div class="message-reaction-picker hidden" data-reaction-picker-for="${safeMessageId}">${renderReactionPicker(msg.id)}</div>
             </div>
         </div>
     `;
@@ -5490,13 +5492,16 @@ function renderVoiceParticipantsGrid() {
 
         const volumePct = Math.round((participantVolumes[participant.user_id] ?? 1) * 100);
         const screenBadge = participant.screen_sharing ? '<span class="voice-participant-badge active" title="Screen sharing">🖥</span>' : '';
+        const safeDisplayName = escapeHtml(displayName);
+        const safeUsername = escapeHtmlAttr(String(username ?? ''));
+        const safeUserId = escapeHtmlAttr(String(participant.user_id ?? ''));
         const avatarMarkup = avatarUrl
-            ? `<img src="${escapeHtmlAttr(avatarUrl)}" alt="${displayName}" class="voice-participant-avatar-img" data-avatar-fallback="${initial}">`
+            ? `<img src="${escapeHtmlAttr(avatarUrl)}" alt="${safeDisplayName}" class="voice-participant-avatar-img" data-avatar-fallback="${initial}">`
             : `<span>${initial}</span>`;
         const muteOverlay = participant.muted ? '<img src="/emoji/mute.png" alt="Muted" class="mute-status-icon">' : '';
 
         return `
-            <div class="${cardClasses}" data-user-id="${participant.user_id}" data-username="${username}" title="${displayName}">
+            <div class="${cardClasses}" data-user-id="${safeUserId}" data-username="${safeUsername}" title="${safeDisplayName}">
                 <div class="voice-participant-avatar-wrap">
                     <div class="voice-participant-avatar">
                         <div class="voice-participant-avatar-media" data-avatar-fallback-target="1">${avatarMarkup}${muteOverlay}</div>
@@ -5507,7 +5512,7 @@ function renderVoiceParticipantsGrid() {
                 <div class="voice-participant-volume compact">
                     <div class="voice-participant-volume-fill" style="width: ${volumePct}%"></div>
                 </div>
-                <div class="voice-participant-name">${displayName}</div>
+                <div class="voice-participant-name">${safeDisplayName}</div>
             </div>
         `;
     }).join('');
