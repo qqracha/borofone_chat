@@ -439,6 +439,28 @@ function applyDeletedMessage(messageId, body = 'Сообщение удален�
 async function toggleReaction(messageId, emoji) {
     if (!currentRoom || !messageId || !emoji) return;
 
+    // Optimistic UI update - update immediately before server response
+    const container = messagesList.querySelector(`[data-reactions-for="${messageId}"]`);
+    if (container) {
+        const existingChip = container.querySelector(`[data-emoji="${CSS.escape(emoji)}"]`);
+        const isAdding = !existingChip?.classList.contains('active');
+        
+        // Apply optimistic update
+        applyReactionUpdateOptimistic(messageId, emoji, isAdding);
+    }
+
+    // Send server request in background (don't await for UI)
+    sendReactionRequest(messageId, emoji).catch(err => {
+        console.error('[reaction] toggle failed', err);
+        // Revert optimistic update on failure - fetch fresh data
+        if (container && typeof fetchReactionData === 'function') {
+            fetchReactionData(messageId);
+        }
+    });
+}
+
+// Send reaction request to server (no UI update needed since we use optimistic updates)
+async function sendReactionRequest(messageId, emoji) {
     try {
         const response = await fetchWithAuth(`${getApiUrl()}/rooms/${currentRoom.id}/messages/${messageId}/reactions`, {
             method: 'POST',
@@ -451,10 +473,9 @@ async function toggleReaction(messageId, emoji) {
         }
 
         const data = await response.json();
+        // Update with server-confirmed state
         applyReactionUpdate(data.message_id, data.reactions || [], data.actor_user_id, data.action, data.emoji);
     } catch (err) {
-        console.error('[reaction] toggle failed', err);
-
         // Fallback to WS if HTTP unavailable
         try {
             await wsReady;
@@ -468,6 +489,65 @@ async function toggleReaction(messageId, emoji) {
             }
         } catch (wsErr) {
             console.error('[reaction] ws fallback failed', wsErr);
+        }
+        throw err; // Re-throw to trigger revert in caller
+    }
+}
+
+// Optimistically update UI immediately without waiting for server
+function applyReactionUpdateOptimistic(messageId, emoji, isAdding) {
+    const container = messagesList.querySelector(`[data-reactions-for="${messageId}"]`);
+    if (!container) return;
+
+    const existingChip = container.querySelector(`[data-emoji="${CSS.escape(emoji)}"]`);
+    
+    if (isAdding) {
+        // Adding new reaction
+        if (!existingChip) {
+            // Create new reaction chip
+            const newReaction = {
+                emoji: emoji,
+                count: 1,
+                reacted_by_me: true
+            };
+            
+            const existingReactions = [];
+            for (const chip of container.querySelectorAll('.reaction-chip')) {
+                existingReactions.push({
+                    emoji: chip.dataset.emoji,
+                    count: parseInt(chip.dataset.count || '0', 10),
+                    reacted_by_me: chip.classList.contains('active')
+                });
+            }
+            existingReactions.push(newReaction);
+            container.innerHTML = renderReactions(existingReactions);
+        } else {
+            // Toggle existing reaction to active
+            existingChip.classList.add('active');
+            const countEl = existingChip.querySelector('.reaction-count');
+            if (countEl) {
+                const currentCount = parseInt(countEl.textContent || '0', 10);
+                countEl.textContent = currentCount + 1;
+            }
+            existingChip.dataset.count = String(parseInt(existingChip.dataset.count || '0', 10) + 1);
+        }
+    } else {
+        // Removing reaction (toggle off)
+        if (existingChip) {
+            const countEl = existingChip.querySelector('.reaction-count');
+            const currentCount = parseInt(countEl?.textContent || '1', 10);
+            
+            if (currentCount <= 1) {
+                // Remove the chip entirely
+                existingChip.remove();
+            } else {
+                // Decrease count
+                existingChip.classList.remove('active');
+                if (countEl) {
+                    countEl.textContent = currentCount - 1;
+                }
+                existingChip.dataset.count = String(currentCount - 1);
+            }
         }
     }
 }

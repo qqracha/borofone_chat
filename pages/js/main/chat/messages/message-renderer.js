@@ -68,6 +68,101 @@ function getAdminCrownHtml(role) {
     return `<span class="admin-crown" aria-label="Администратор" role="img">${crownSvg}</span>`;
 }
 
+const MESSAGE_GROUP_WINDOW_MS = 2 * 60 * 1000;
+const MESSAGE_GROUP_BREAK_MS = 5 * 60 * 1000;
+let activeMessageGroup = null;
+let lastMessageMeta = null;
+
+function resetMessageGrouping() {
+    activeMessageGroup = null;
+    lastMessageMeta = null;
+}
+
+function getDateKey(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function formatMessageTime(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    return date.toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function isMarkdownMediaOnly(body) {
+    if (typeof body !== 'string') return false;
+    const stripped = body.replace(/!\[[^\]]*\]\([^)]*\)/g, '').trim();
+    return stripped.length === 0;
+}
+
+function getMessageKind(msg) {
+    const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0;
+    if (hasAttachments) return 'attachment';
+    const body = typeof msg.body === 'string' ? msg.body.trim() : '';
+    if (!body) return 'empty';
+    return 'text';
+}
+
+function buildMessageMeta(msg, safeUserId, author, username, createdAt) {
+    const timestamp = createdAt instanceof Date && !Number.isNaN(createdAt.getTime()) ? createdAt.getTime() : null;
+    const dayKey = timestamp ? getDateKey(createdAt) : '';
+    const timeLabel = timestamp ? formatMessageTime(createdAt) : '';
+    const authorKey = safeUserId && safeUserId !== '0' ? `id:${safeUserId}` : `name:${author}|${username}`;
+    return {
+        authorKey,
+        kind: getMessageKind(msg),
+        dayKey,
+        timestamp,
+        timeLabel
+    };
+}
+
+function shouldGroupMessages(prevMeta, nextMeta) {
+    if (!prevMeta || !nextMeta) return false;
+    if (prevMeta.authorKey !== nextMeta.authorKey) return false;
+    if (!['text', 'attachment'].includes(prevMeta.kind) || !['text', 'attachment'].includes(nextMeta.kind)) return false;
+    if (!Number.isFinite(prevMeta.timestamp) || !Number.isFinite(nextMeta.timestamp)) return false;
+    if (!prevMeta.dayKey || prevMeta.dayKey !== nextMeta.dayKey) return false;
+    const diff = nextMeta.timestamp - prevMeta.timestamp;
+    if (diff < 0) return false;
+    if (diff > MESSAGE_GROUP_BREAK_MS) return false;
+    return diff <= MESSAGE_GROUP_WINDOW_MS;
+}
+
+function formatGroupTimeRange(startTimestamp, endTimestamp) {
+    if (!Number.isFinite(startTimestamp) || !Number.isFinite(endTimestamp)) return '';
+    const startLabel = formatMessageTime(new Date(startTimestamp));
+    const endLabel = formatMessageTime(new Date(endTimestamp));
+    if (!startLabel || !endLabel) return '';
+    if (startLabel === endLabel) return startLabel;
+    return `${startLabel} - ${endLabel}`;
+}
+
+function updateGroupDisplay(group) {
+    if (!group) return;
+    const timeLabel = Number.isFinite(group.endTime) ? formatMessageTime(new Date(group.endTime)) : '';
+    if (group.startMessageEl && timeLabel) {
+        const timeEl = group.startMessageEl.querySelector('.message-time');
+        if (timeEl) {
+            timeEl.textContent = timeLabel;
+        }
+    }
+    const tooltipLabel = formatGroupTimeRange(group.startTime, group.endTime);
+    group.messages.forEach((messageEl) => {
+        if (!messageEl) return;
+        if (group.messages.length > 1 && tooltipLabel) {
+            messageEl.setAttribute('title', tooltipLabel);
+        } else {
+            messageEl.removeAttribute('title');
+        }
+    });
+}
+
 async function loadMessages(roomId) {
     try {
         const response = await fetchWithAuth(`${getApiUrl()}/rooms/${roomId}/messages`);
@@ -79,6 +174,7 @@ async function loadMessages(roomId) {
         const messages = await response.json();
 
         messagesList.innerHTML = '';
+        resetMessageGrouping();
         
         // Сбрасываем состояние скролл менеджера
         if (window.ScrollManager) {
@@ -108,6 +204,7 @@ async function loadMessages(roomId) {
                     divider.innerHTML = '<span>Новые сообщения</span>';
                     messagesList.appendChild(divider);
                     unreadDividerAdded = true;
+                    resetMessageGrouping();
                 }
 
                 addMessage(msg, false);
@@ -160,6 +257,7 @@ function addMessage(msg, animate = false, isOwnMessage = false) {
 
     const author = msg.user?.display_name || msg.author || 'Unknown';
     const username = msg.user?.username || 'unknown';
+    const createdAt = new Date(msg.created_at);
     // Безопасно вычисляем и экранируем инициал автора
     let rawInitial = '';
     if (typeof author === 'string' && author.length > 0) {
@@ -173,10 +271,7 @@ function addMessage(msg, animate = false, isOwnMessage = false) {
     const userRole = msg.user?.role || null;
     const adminCrownHtml = getAdminCrownHtml(userRole);
 
-    const time = new Date(msg.created_at).toLocaleTimeString('ru-RU', {
-        hour: '2-digit',
-        minute: '2-digit'
-    });
+    const time = formatMessageTime(createdAt);
 
     // Edited label
     const editedLabel = msg.edited_at ? '<span class="message-edited-label">edited</span>' : '';
@@ -235,7 +330,29 @@ function addMessage(msg, animate = false, isOwnMessage = false) {
         }, { once: true });
     }
 
+    const messageMeta = buildMessageMeta(msg, safeUserId, author, username, createdAt);
+    const shouldGroup = shouldGroupMessages(lastMessageMeta, messageMeta);
+
+    if (shouldGroup && activeMessageGroup) {
+        messageEl.classList.add('message-group-continue');
+        activeMessageGroup.endTime = messageMeta.timestamp;
+        activeMessageGroup.messages.push(messageEl);
+    } else {
+        if (lastMessageMeta) {
+            messageEl.classList.add('message-group-start');
+        }
+        activeMessageGroup = {
+            startMessageEl: messageEl,
+            messages: [messageEl],
+            startTime: messageMeta.timestamp,
+            endTime: messageMeta.timestamp,
+            authorKey: messageMeta.authorKey
+        };
+    }
+
     messagesList.appendChild(messageEl);
+    updateGroupDisplay(activeMessageGroup);
+    lastMessageMeta = messageMeta;
     
     // Используем ScrollManager для управления скроллом
     if (animate && window.ScrollManager) {
@@ -559,3 +676,15 @@ function updateMessageContent(messageId, newBody, editedAt) {
 
     updateEditedLabel(messageEl, editedAt);
 }
+
+
+
+
+
+
+
+
+
+
+
+
