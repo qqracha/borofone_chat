@@ -1574,13 +1574,13 @@ body {
 .messages-list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 1px;
 }
 
-.message {
+    .message {
     display: flex;
-    gap: 12px;
-    padding: 12px;
+    gap: 8px;
+    padding: 1px 8px;
     border-radius: 10px;
     transition: background 0.2s ease;
     animation: messageSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -1600,6 +1600,23 @@ body {
 .message:hover {
     background: rgba(255, 255, 255, 0.02);
 }
+
+    .message-group-continue {
+    padding-left: calc(8px + 40px + 8px);
+    padding-top: 0px;
+    padding-bottom: 0px;
+    margin-top: -1px;
+}
+
+    .message-group-continue .message-avatar-wrapper,
+.message-group-continue .message-header {
+    display: none;
+}
+
+    .message-group-start {
+    margin-top: 16px;
+}
+
 
 .message-avatar {
     width: 40px;
@@ -1646,7 +1663,7 @@ body {
     display: flex;
     align-items: baseline;
     gap: 8px;
-    margin-bottom: 4px;
+    margin-bottom: 1px;
 }
 
 .message-author {
@@ -2785,17 +2802,7 @@ img.twemoji-emoji {
     }
 }
 
-@media (max-width: 640px) {
-    .rooms-sidebar {
-        position: absolute;
-        left: 0 !important;
-        top: 0 !important;
-        bottom: 0 !important;
-        z-index: 100;
-        transform: translateX(-100%) !important;
-        transition: transform 0.3s ease;
-        margin: 0 !important;
-    }
+@media\\\\ \\\\(max-width:\\\\ 640px\\\\)\\\\ \\\\{\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\.rooms-sidebar\\\\ \\\\{\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ position:\\\\ absolute;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ left:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ top:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ bottom:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ z-index:\\\\ 100;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ transform:\\\\ translateX\\\\(-100%\\\\)\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ transition:\\\\ transform\\\\ 0\\\\.3s\\\\ ease;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ margin:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ }
 
     .rooms-sidebar.active {
         transform: translateX(0) !important;
@@ -5551,7 +5558,7 @@ img.twemoji-emoji {
     }
 }
 
-.message {
+    .message {
     position: relative;
 }
 
@@ -8583,15 +8590,7 @@ img.twemoji-emoji {
 }
 
 /* Мобильная версия чата */
-@media (max-width: 640px) {
-    /* Основные контейнеры */
-    html, body {
-        overflow: hidden;
-        height: 100vh;
-        height: 100dvh;
-        position: fixed;
-        width: 100%;
-    }
+@media\\\\ \\\\(max-width:\\\\ 640px\\\\)\\\\ \\\\{\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\.rooms-sidebar\\\\ \\\\{\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ position:\\\\ absolute;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ left:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ top:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ bottom:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ z-index:\\\\ 100;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ transform:\\\\ translateX\\\\(-100%\\\\)\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ transition:\\\\ transform\\\\ 0\\\\.3s\\\\ ease;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ margin:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ }
     
     /* Показываем мобильные кнопки */
     .mobile-menu-btn,
@@ -8752,11 +8751,20 @@ img.twemoji-emoji {
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
     }
-    
+
     .message {
-        padding: 10px 12px;
-        margin-bottom: 8px;
+        padding: 1px 8px;
+        margin-bottom: 0px;
         border-radius: 12px;
+    }
+
+    .message-group-continue {
+        padding-left: calc(8px + 36px + 8px);
+        padding-top: 0px;
+        padding-bottom: 0px;
+        margin-top: -1px;
+    }    .message-group-start {
+        margin-top: 16px;
     }
     
     .message-avatar {
@@ -8983,10 +8991,7 @@ img.twemoji-emoji {
 }
 
 /* Планшеты (768px - 1024px) */
-@media (min-width: 641px) and (max-width: 1024px) {
-    .app-container {
-        padding: 12px;
-    }
+@media\\ \\(min-width:\\ 641px\\)\\ and\\ \\(max-width:\\ 1024px\\)\\ \\{\\r\\n\\ \\ \\ \\ \\.app-container\\ \\{\\r\\n\\ \\ \\ \\ \\ \\ \\ \\ padding:\\ 12px;\\r\\n\\ \\ \\ \\ }
     
     .rooms-sidebar {
         width: 220px;
@@ -8995,17 +9000,23 @@ img.twemoji-emoji {
     .chat-main {
         margin-left: 12px;
     }
-    
+
     .message {
-        padding: 12px 16px;
+        padding: 2px 8px;
+    }
+
+    .message-group-continue {
+        padding-left: calc(8px + 40px + 8px);
+        padding-top: 0px;
+        padding-bottom: 0px;
+        margin-top: -1px;
+    }    .message-group-start {
+        margin-top: 16px;
     }
 }
 
 /* Landscape мобильные */
-@media (max-width: 640px) and (orientation: landscape) {
-    .message-input-container {
-        padding: 8px !important;
-    }
+@media\\\\ \\\\(max-width:\\\\ 640px\\\\)\\\\ \\\\{\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\.rooms-sidebar\\\\ \\\\{\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ position:\\\\ absolute;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ left:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ top:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ bottom:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ z-index:\\\\ 100;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ transform:\\\\ translateX\\\\(-100%\\\\)\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ transition:\\\\ transform\\\\ 0\\\\.3s\\\\ ease;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ \\\\ margin:\\\\ 0\\\\ !important;\\\\r\\\\n\\\\ \\\\ \\\\ \\\\ }
     
     .message-input {
         padding: 8px !important;
@@ -9579,5 +9590,41 @@ img.twemoji-emoji {
     font-size: 12px;
     color: var(--text-secondary);
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
