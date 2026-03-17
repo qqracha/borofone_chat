@@ -67,7 +67,7 @@ borofone_chat/
 ├── deploy/
 │   ├── docker/
 │   │   ├── Dockerfile
-│   │   ├── docker-compose.infra.yml    # Local infrastructure (Postgres + Redis + Mongo)
+│   │   ├── docker-compose.infra.yml    # Local infrastructure (Postgres + Redis)
 │   │   ├── docker-compose.staging.yml  # Isolated staging environment
 │   │   └── docker-compose.prod.yml     # Isolated production environment
 │   ├── env/
