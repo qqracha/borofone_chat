@@ -37,6 +37,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - uploads_data:/code/uploads
+      - ../../data/leaderboard:/code/pages/web_backend/data
     depends_on:
       postgres:
         condition: service_healthy

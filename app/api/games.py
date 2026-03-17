@@ -110,6 +110,13 @@ async def leaderboard_compat(
 ):
     params = await _request_params(request)
     resolved_action = str(params.get('action') or action or 'list').strip().lower()
+    has_score = any(key in params for key in ('score', 'points', 'value'))
+    has_player = any(key in params for key in ('nickname', 'player_name', 'name', 'username'))
+
+    # Legacy Godot client can send a POST payload without explicit action.
+    # Treat such requests as score submission instead of a leaderboard read.
+    if request.method == 'POST' and 'action' not in params and has_score and has_player:
+        resolved_action = 'submit'
 
     if resolved_action == 'list':
         entries = _serialize_entries(_read_entries(), limit=limit)
