@@ -12,6 +12,8 @@ COPY alembic ./alembic
 COPY alembic.ini .
 COPY fix_sequences.sql .
 
+RUN mkdir -p /code/pages/web_backend/data /code/uploads
+
 ENV APP_PORT=8000
 
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${APP_PORT:-8000}"]

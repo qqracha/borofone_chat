@@ -111,6 +111,9 @@ docker compose -f deploy/docker/docker-compose.infra.yml ps
 docker compose -f deploy/docker/docker-compose.infra.yml up -d
 ```
 
+Leaderboard for `tears-of-bfu` is persisted outside the container in `data/leaderboard/leaderboard.json`.
+For staging/production compose stacks this directory is bind-mounted into `/code/pages/web_backend/data`.
+
 **DOWN infra:**
 
 ```bash
