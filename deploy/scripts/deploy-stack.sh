@@ -35,11 +35,13 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 resolve_compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
     COMPOSE_BIN=(docker compose)
+    COMPOSE_FLAVOR="plugin"
     return 0
   fi
 
   if command -v docker-compose >/dev/null 2>&1; then
     COMPOSE_BIN=(docker-compose)
+    COMPOSE_FLAVOR="legacy"
     return 0
   fi
 
@@ -140,7 +142,14 @@ wait_for_service postgres 120
 wait_for_service redis 60
 "${compose_cmd[@]}" build api
 "${compose_cmd[@]}" run --rm api alembic upgrade head
-"${compose_cmd[@]}" up -d --no-deps --force-recreate api
+if [ "${COMPOSE_FLAVOR}" = "legacy" ]; then
+  echo "[deploy] using legacy docker-compose workaround for api recreation"
+  "${compose_cmd[@]}" stop api || true
+  "${compose_cmd[@]}" rm -f api || true
+  "${compose_cmd[@]}" up -d --no-deps api
+else
+  "${compose_cmd[@]}" up -d --no-deps --force-recreate api
+fi
 wait_for_service api 120
 "${compose_cmd[@]}" ps
 echo "[deploy] $(date -Is) done ${env_name}"
