@@ -40,7 +40,7 @@ The deploy script performs:
 1. git sync for the target branch
 2. backup of database, uploads, leaderboard, and `.env`
 3. one-time migration of legacy uploads volume and repo-local leaderboard files into host storage
-4. `docker compose config` preflight validation
+4. compose config preflight validation
 5. startup and health checks for Postgres and Redis
 6. API image build
 7. Alembic migrations
@@ -68,5 +68,5 @@ Legacy Docker volumes are kept in place for rollback safety.
 
 - Do not use `docker compose down` for normal application updates.
 - Do not store runtime user files inside the repository checkout.
-- Use `docker compose` instead of legacy `docker-compose`.
+- Deploy scripts auto-detect `docker compose` and fall back to `docker-compose` when needed.
 - Reverse proxy remains in nginx and continues to target `127.0.0.1:8000` and `127.0.0.1:8001`.

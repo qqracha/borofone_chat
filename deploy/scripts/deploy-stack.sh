@@ -31,7 +31,21 @@ esac
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
-compose_cmd=(docker compose -p "${compose_project}" -f "${compose_file}")
+
+resolve_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_BIN=(docker compose)
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_BIN=(docker-compose)
+    return 0
+  fi
+
+  echo "docker compose or docker-compose is required" >&2
+  exit 1
+}
 
 wait_for_service() {
   local service_name="$1"
@@ -76,10 +90,8 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  echo "docker compose plugin is required" >&2
-  exit 1
-fi
+resolve_compose_cmd
+compose_cmd=("${COMPOSE_BIN[@]}" -p "${compose_project}" -f "${compose_file}")
 
 cd "${repo_root}"
 

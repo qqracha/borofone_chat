@@ -114,6 +114,7 @@ docker compose -f deploy/docker/docker-compose.infra.yml up -d
 
 Leaderboard for `tears-of-bfu` is persisted outside the container in `data/leaderboard/leaderboard.json` for local development.
 For staging/production compose stacks, uploads and leaderboard data are stored under `HOST_DATA_ROOT` on the VPS and bind-mounted into the API container.
+The deploy scripts support both `docker compose` and legacy `docker-compose`.
 
 **DOWN infra:**
 

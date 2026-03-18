@@ -15,6 +15,21 @@ uploads_volume="$5"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 
+resolve_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_BIN=(docker compose)
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_BIN=(docker-compose)
+    return 0
+  fi
+
+  echo "docker compose or docker-compose is required" >&2
+  exit 1
+}
+
 if [ ! -f "${repo_root}/.env" ]; then
   echo "missing ${repo_root}/.env" >&2
   exit 1
@@ -32,7 +47,8 @@ timestamp="$(date +%Y%m%d-%H%M%S)"
 target_dir="${backup_root}/${timestamp}"
 mkdir -p "${target_dir}"
 
-compose_cmd=(docker compose -p "${compose_project}" -f "${compose_file}")
+resolve_compose_cmd
+compose_cmd=("${COMPOSE_BIN[@]}" -p "${compose_project}" -f "${compose_file}")
 host_uploads_dir="${HOST_DATA_ROOT%/}/uploads"
 host_leaderboard_dir="${HOST_DATA_ROOT%/}/leaderboard"
 legacy_leaderboard_dir="${repo_root}/data/leaderboard"
